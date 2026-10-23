@@ -234,7 +234,7 @@ async function act(what,msg){
   document.querySelectorAll('button').forEach(b=>b.disabled=true);
   out.textContent='처리 중…';
   try{
-    const j=await (await fetch(what,{method:'POST'})).json();
+    const j=await (await fetch(what,{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})).json();
     out.textContent=(j.ok?'완료: ':'실패: ')+j.message;
   }catch(e){ out.textContent='실패: '+e; }
   busy=false;
@@ -260,7 +260,7 @@ async function askHelp(){
   const ctrl=new AbortController();
   const timer=setTimeout(()=>ctrl.abort(),120000);
   try{
-    const r=await fetch(ctlBase()+'help',{method:'POST',signal:ctrl.signal});
+    const r=await fetch(ctlBase()+'help',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}',signal:ctrl.signal});
     if(!r.ok){ o.textContent='도움말을 준비하지 못했어요 (HTTP '+r.status+'). 잠시 후 다시 눌러주세요.'; }
     else{
       const j=await r.json();

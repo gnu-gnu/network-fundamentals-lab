@@ -141,6 +141,14 @@ class NoticeHTTPTests(unittest.TestCase):
         self.assertEqual(self.call('POST', '/admin/notice', dict(title='', body='b'), user=None, admin='carol')[0], 400)
         self.assertEqual(self.call('POST', '/u/alice/ctl/notice', dict(client='a'*32), user=None)[0], 403)
 
+    def test_lifecycle_and_admin_writes_share_csrf_checks(self):
+        self.assertEqual(self.call('POST', '/u/alice/ctl/start', {},
+                                   Origin='https://evil.invalid')[0], 403)
+        self.assertEqual(self.call('POST', '/u/alice/ctl/destroy', {},
+                                   **{'Content-Type': 'text/plain'})[0], 415)
+        self.assertEqual(self.call('POST', '/admin/config', {'pool_size': 5}, user=None,
+                                   admin='carol', **{'Sec-Fetch-Site': 'same-site'})[0], 403)
+
     def test_panel_and_assets(self):
         html = self.labd.render_panel('alice')
         for needle in ('id=noticelauncher', 'assets/notice.js', 'assets/notice.css', 'id=noticepanel'):

@@ -152,7 +152,7 @@ class Handler(BaseHTTPRequestHandler):
              urlparse(origin).hostname != urlparse('//' + self.headers.get('Host', '')).hostname))):
             return 403, '다른 사이트에서 보낸 요청입니다.'
         if self.headers.get('Content-Type', '').split(';', 1)[0].strip() != 'application/json':
-            return 415, 'JSON 요청이 필요합니다.'
+            return 415, 'JSON 요청이 필요합니다. 페이지를 새로고침한 뒤 다시 시도하세요.'
         try:
             length = int(self.headers.get('Content-Length') or 0)
         except ValueError:
@@ -334,6 +334,9 @@ class Handler(BaseHTTPRequestHandler):
         admin = self._admin()
         if not admin:
             return self._fail(403, "관리자 인증 필요")
+        rejected = self._same_origin_json(32768)
+        if rejected:
+            return self._fail(*rejected)
         if what == 'community-ticket':
             rejected = self._same_origin_json(1024)
             if rejected:
@@ -380,6 +383,9 @@ class Handler(BaseHTTPRequestHandler):
         return self._fail(404, "없는 동작")
 
     def _user_post(self, user, what):
+        rejected = self._same_origin_json(32768)
+        if rejected:
+            return self._fail(*rejected)
         if what == 'community':
             try:
                 rejected = self._same_origin_json(8192)
