@@ -102,12 +102,20 @@ def _wait_ready(name, ip):
     return False
 
 
-def mark_pool_ready(name):
+def finish_ready(name):
+    """Publish a warm VM or atomically transfer a reserved VM to its owner."""
     with LOCK:
         for p in STATE["pool"]:
             if p["instance"] == name:
-                p["ready"] = True
-        save_state()
+                owner = p.get("claim")
+                if owner:
+                    STATE["pool"].remove(p)
+                    _assign(owner, p["instance"], p["ip"], p.get("created"))
+                else:
+                    p["ready"] = True
+                save_state()
+                return owner
+    return None
 
 
 def drop_pool(name):
@@ -116,7 +124,7 @@ def drop_pool(name):
         save_state()
 
 
-def create_instance():
+def create_instance(claim=None):
     """새 VM 을 만들어 터미널이 응답할 때까지 기다린다. (name, ip) 반환."""
     with LOCK:
         ip = alloc_ip()
@@ -125,7 +133,7 @@ def create_instance():
         name = f"netlab-{uuid.uuid4().hex[:10]}"
         # IP 를 먼저 예약해 동시 생성 시 충돌을 막는다.
         STATE["pool"].append({"instance": name, "ip": ip, "ready": False,
-                              "created": iso()})
+                              "claim": claim, "created": iso()})
         save_state()
 
     rc, _, err = lxc("init", CONFIG["image"], name, "--vm", "--profile", CONFIG["profile"],
@@ -153,8 +161,11 @@ def create_instance():
     if _wait_ready(name, ip):
         # 되돌리기 기준점. 이 이름이어야 "초기화"가 동작한다.
         lxc("snapshot", name, "clean")
-        mark_pool_ready(name)
-        log(f"예비 환경 준비 완료: {name} ({ip})")
+        owner = finish_ready(name)
+        if owner:
+            log(f"{owner} ← 신규 환경 배정 {name}")
+        else:
+            log(f"예비 환경 준비 완료: {name} ({ip})")
         return name, ip
 
     lxc("delete", name, "--force")
@@ -185,12 +196,9 @@ def claim_for(user):
                 regen_routing()
                 return
 
-    name, ip = create_instance()          # 풀이 비었으면 직접 생성
-    with LOCK:
-        STATE["pool"] = [p for p in STATE["pool"] if p["instance"] != name]
-        _assign(user, name, ip)
-        save_state()
-    log(f"{user} ← 신규 환경 배정 {name}")
+    # Direct creation stays reserved and not-ready until it is transferred to
+    # this user under LOCK. Another claimant can never observe it as pool-ready.
+    create_instance(claim=user)
     regen_routing()
 
 

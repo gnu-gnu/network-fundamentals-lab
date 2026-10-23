@@ -5,8 +5,9 @@ import time
 
 from . import paths, store
 from .instances import (create_instance, destroy_for, drop_pool, enforce_isolation,
-                        ensure_lab_permissions, instance_state, mark_pool_ready,
+                        ensure_lab_permissions, finish_ready, instance_state,
                         stop_for, ttyd_ready)
+from .nginx import regen_routing
 from .procs import lxc
 from .recordings import collect_recordings
 from .store import CONFIG, LOCK, STATE, save_state
@@ -55,8 +56,12 @@ def heal_pool():
             continue
         if ttyd_ready(ip) and ensure_lab_permissions(name):
             lxc("snapshot", name, "clean")   # 이미 있으면 실패하지만 무해하다
-            mark_pool_ready(name)
-            log(f"예비 환경 준비 완료(복구): {name} ({ip})")
+            owner = finish_ready(name)
+            if owner:
+                log(f"{owner} ← 준비 중이던 환경 배정 복구 {name} ({ip})")
+                regen_routing()
+            else:
+                log(f"예비 환경 준비 완료(복구): {name} ({ip})")
             continue
 
         # 너무 오래 준비되지 않으면 버리고 다시 만든다.
@@ -69,7 +74,8 @@ def heal_pool():
 
 def fill_pool():
     with LOCK:
-        have = len(STATE["pool"])
+        # A VM reserved for a direct claim is not a warm spare; do not let it count.
+        have = len([p for p in STATE["pool"] if not p.get("claim")])
     want = max(0, int(CONFIG.get("pool_size", 0)))
     if have < want:
         try:
