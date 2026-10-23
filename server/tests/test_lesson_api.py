@@ -22,7 +22,7 @@ class FakeClient:
     """Mimics AgentClient: per-account instances, a mutable runner state, scripted check results."""
 
     def __init__(self):
-        self.owned = {'alice': 'vm-alice', 'bob': 'vm-bob'}
+        self.owned = {'alice': 'vm-alice', 'bob': 'vm-bob', 'guest': 'vm-guest'}
         self.missing = set()
         self.calls = []
         self.check_result = {'status': 'fail', 'items': []}
@@ -242,12 +242,14 @@ class LessonApiTests(LessonApiCase):
 
     def test_shared_environment_is_not_personal_achievement(self):
         store.CONFIG['auth_mode'] = 'open'
-        self.act('start')
+        self.act('start', account='guest')
         self.client.check_result = {'status': 'pass', 'items': []}
-        self.assertTrue(self.job('alice', self.act('check'))[1]['result']['progress']['completed_now'])
+        self.assertTrue(self.job('guest', self.act('check', account='guest'))[1]['result']['progress']['completed_now'])
+        self.assertTrue(self.state('guest')[1]['shared'])
         with lesson_progress.connect(immediate=False) as c:
             self.assertEqual(c.execute('SELECT count(*) FROM lesson_summary').fetchone()[0], 0)
             self.assertEqual(c.execute('SELECT shared FROM completion_events').fetchone()[0], 1)
+        self.assertFalse(self.state('alice')[1]['shared'])       # own VM on the same open-mode server
 
     def test_environment_change_elsewhere_closes_the_attempt(self):
         self.act('start')

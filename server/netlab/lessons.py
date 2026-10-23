@@ -56,8 +56,9 @@ def step_of(lesson, step_id):
     return next((s for s in lesson['steps'] if s['id'] == step_id), None)
 
 
-def shared():
-    return CONFIG.get('auth_mode') == 'open'
+def shared(account):
+    """The open-mode guest VM is shared by every visitor (same rule as the panel notice)."""
+    return account == 'guest' and CONFIG.get('auth_mode') == 'open'
 
 
 # ─────────────────────────────── public views ───────────────────────────────
@@ -173,7 +174,7 @@ def _run(account, instance, lesson, request, job_id):
             outcome = progress.record_check(account, instance, lesson, request, response, job_id)
             summary = dict(status=outcome['status'], stale=outcome['stale'], completed_now=outcome['completed_now'])
         else:
-            progress.record_change(account, instance, lesson, request, response, job_id, pack_revision, shared())
+            progress.record_change(account, instance, lesson, request, response, job_id, pack_revision, shared(account))
             summary = {}
     except Exception as exc:
         log(f'학습 팩 진행 기록 실패 {job_id}: {exc}')
@@ -225,7 +226,7 @@ def state(account):
         CATALOG['lessons'].get(attempt['lesson_id']) if attempt else None)
     view = progress.view(account, instance, lesson) if lesson else None
     return dict(ok=True, environment=environment_view(status), catalog=public_catalog(),
-                attempt=view, shared=shared(), jobs=progress.active_jobs(account))
+                attempt=view, shared=shared(account), jobs=progress.active_jobs(account))
 
 
 def handle_post(account, seg, body):

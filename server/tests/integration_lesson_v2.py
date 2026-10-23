@@ -13,6 +13,9 @@ nginx would, so authentication, routing, jobs and the progress DB are the real o
   M1-05  reset while a check runs: the check is cancelled (or finishes) before the reset, never counted after
   M1-07  damaged runner state: status says recovery_required, nothing is torn down
   M1-10  after completion, reset and stop still work and the completion stays recorded
+  --with-cli     the shell `lab` command still works next to the runner (shared lock), and the web
+                 notices an environment switched from the terminal instead of judging the wrong lesson
+  --with-reboot  after a VM restart the runner asks for explicit recovery; reset recovers
 """
 import argparse
 import http.client
@@ -89,6 +92,8 @@ def step(name):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--account', required=True)
+    parser.add_argument('--with-cli', action='store_true')
+    parser.add_argument('--with-reboot', action='store_true')
     args = parser.parse_args()
     config = json.load(open('/etc/netlab/config.json'))
     if config.get('environment') != 'development':
@@ -141,8 +146,9 @@ def main():
     job = labd.check()
     assert job['result']['runner']['result']['status'] == 'pass', job
     assert job['result']['progress']['completed_now'], job
-    completed_at = labd.state()['attempt']['completed_at']
-    assert completed_at
+    view = labd.state()
+    completed_at = view['attempt']['completed_at']
+    assert completed_at and view['attempt']['completions'] >= 1 and not view['shared'], view
 
     step('M1-10 완료 후 reset → 미통과, 완료 기록 유지')
     job = labd.act('reset')
@@ -177,6 +183,41 @@ def main():
         assert still.strip(), 'containers must not be torn down automatically'
     finally:
         lxc('exec', instance, '--', 'mv', RUNNER_STATE + '.m1bak', RUNNER_STATE)
+
+    if args.with_cli:
+        step('CLI: 터미널에서 lab 04 로 바꾸면 웹은 다른 레슨으로 판정하지 않는다')
+        rc, out, err = lxc('exec', instance, '--', 'runuser', '-u', 'lab', '--', 'bash', '-c',
+                           '. /etc/lab-shell.sh; lab 04', timeout=600)
+        assert rc == 0, (out[-500:], err[-500:])
+        env = labd.state()['environment']
+        assert env['state'] == 'running' and env['runtime']['matches'] is False, env
+        job = labd.check()
+        assert job['result']['error'] == 'conflict', job
+        step('CLI: 웹 start 는 터미널 실습을 내리고 12장을 다시 올린다')
+        job = labd.act('start')
+        assert job['state'] == 'done' and not job['result']['runner']['noop'], job
+        rc, out, _ = lxc('exec', instance, '--', 'docker', 'ps', '--format', '{{.Names}}')
+        assert 'clab-04' not in out and 'clab-12-mtu-pmtud-h1' in out, out
+        rc, out, err = lxc('exec', instance, '--', 'runuser', '-u', 'lab', '--', 'bash', '-c',
+                           '. /etc/lab-shell.sh; lab 12')
+        assert rc == 0 and '이미 실행 중' in out, (out[-300:], err[-300:])
+
+    if args.with_reboot:
+        step('재부팅: 복구 필요 → reset 으로 복구')
+        rc, _, err = lxc('restart', instance, timeout=300)
+        assert rc == 0, err
+        for _ in range(90):
+            if lxc('exec', instance, '--', 'true', timeout=10)[0] == 0:
+                break
+            time.sleep(2)
+        env = labd.state()['environment']
+        assert env['state'] == 'recovery_required' and env['recovery']['reason'] == 'reboot', env
+        assert set(env['recovery']['allowed']) == {'reset', 'stop'}, env
+        job = labd.check()
+        assert job['result']['error'] == 'recovery_required', job
+        job = labd.act('reset')
+        assert job['state'] == 'done', job
+        assert labd.state()['environment']['state'] == 'running'
 
     step('M1-10 stop')
     job = labd.act('stop')
