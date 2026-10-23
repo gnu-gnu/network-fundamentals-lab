@@ -1,0 +1,1162 @@
+{
+ "source": "main e7aa862 (v1 catalog before learning pack v2)",
+ "lessons": [
+  {
+   "id": "00",
+   "pack": "network",
+   "number": "00",
+   "dir": "00-onramp",
+   "title": "00장 온램프",
+   "assessment": "observe",
+   "checks": [],
+   "probes": [
+    {
+     "label": "h1 주소",
+     "node": "h1",
+     "argv": [
+      "ip",
+      "-br",
+      "addr"
+     ]
+    },
+    {
+     "label": "h1 이웃",
+     "node": "h1",
+     "argv": [
+      "ip",
+      "neigh"
+     ]
+    }
+   ],
+   "definition": "00-onramp/playground.clab.yml",
+   "prefix": "clab-00-onramp",
+   "topics": []
+  },
+  {
+   "id": "01",
+   "pack": "network",
+   "number": "01",
+   "dir": "01-l2-arp",
+   "title": "01장 L2 인접성 & ARP",
+   "assessment": "observe",
+   "checks": [],
+   "probes": [
+    {
+     "label": "h1 ARP 테이블",
+     "node": "h1",
+     "argv": [
+      "ip",
+      "neigh"
+     ]
+    },
+    {
+     "label": "h1 실습 주소(관리망 제외)",
+     "node": "h1",
+     "argv": [
+      "ip",
+      "-br",
+      "addr",
+      "show",
+      "dev",
+      "eth1"
+     ]
+    },
+    {
+     "label": "h2 실습 주소와 MAC",
+     "node": "h2",
+     "argv": [
+      "ip",
+      "addr",
+      "show",
+      "dev",
+      "eth1"
+     ]
+    },
+    {
+     "label": "h3 실습 주소와 MAC",
+     "node": "h3",
+     "argv": [
+      "ip",
+      "addr",
+      "show",
+      "dev",
+      "eth1"
+     ]
+    },
+    {
+     "label": "sw 브리지 MAC",
+     "node": "sw",
+     "argv": [
+      "bash",
+      "-c",
+      "bridge fdb show 2>/dev/null | grep -v permanent | head"
+     ]
+    }
+   ],
+   "definition": "01-l2-arp/01-l2-arp.clab.yml",
+   "prefix": "clab-01-l2-arp",
+   "topics": [
+    "ARP",
+    "이웃\\s*테이블"
+   ]
+  },
+  {
+   "id": "02",
+   "pack": "network",
+   "number": "02",
+   "dir": "02-bcast-loop",
+   "title": "02장 브로드캐스트와 L2 루프",
+   "assessment": "observe",
+   "checks": [],
+   "probes": [
+    {
+     "label": "sw1 브리지 포트",
+     "node": "sw1",
+     "argv": [
+      "bridge",
+      "-d",
+      "link"
+     ]
+    },
+    {
+     "label": "sw2 브리지 포트",
+     "node": "sw2",
+     "argv": [
+      "bridge",
+      "-d",
+      "link"
+     ]
+    },
+    {
+     "label": "sw1 STP",
+     "node": "sw1",
+     "argv": [
+      "ip",
+      "-d",
+      "link",
+      "show",
+      "br0"
+     ]
+    }
+   ],
+   "definition": "02-bcast-loop/02-bcast-loop.clab.yml",
+   "prefix": "clab-02-bcast-loop",
+   "topics": []
+  },
+  {
+   "id": "03",
+   "pack": "network",
+   "number": "03",
+   "dir": "03-vlan-trunk",
+   "title": "03장 VLAN과 트렁크",
+   "assessment": "fault",
+   "checks": [
+    {
+     "node": "h1",
+     "argv": [
+      "ping",
+      "-c1",
+      "-W2",
+      "10.3.10.2"
+     ],
+     "timeout": 30,
+     "expect": {
+      "contains": "1 received"
+     }
+    },
+    {
+     "node": "h1",
+     "argv": [
+      "ping",
+      "-c1",
+      "-W2",
+      "10.3.10.3"
+     ],
+     "timeout": 15,
+     "expect": {
+      "contains": "0 received",
+      "stream": "stdout",
+      "rc": [
+       0,
+       1
+      ]
+     }
+    }
+   ],
+   "probes": [
+    {
+     "label": "sw1 VLAN",
+     "node": "sw1",
+     "argv": [
+      "bridge",
+      "vlan",
+      "show"
+     ]
+    },
+    {
+     "label": "sw2 VLAN",
+     "node": "sw2",
+     "argv": [
+      "bridge",
+      "vlan",
+      "show"
+     ]
+    },
+    {
+     "label": "h1 이웃",
+     "node": "h1",
+     "argv": [
+      "ip",
+      "neigh"
+     ]
+    }
+   ],
+   "definition": "03-vlan-trunk/03-vlan-trunk.clab.yml",
+   "prefix": "clab-03-vlan-trunk",
+   "topics": [
+    "VLAN",
+    "트렁크"
+   ]
+  },
+  {
+   "id": "04",
+   "pack": "network",
+   "number": "04",
+   "dir": "04-l3-routing",
+   "title": "04장 L3 라우팅",
+   "assessment": "fault",
+   "checks": [
+    {
+     "node": "h1",
+     "argv": [
+      "ping",
+      "-c1",
+      "-W2",
+      "10.4.2.10"
+     ],
+     "timeout": 30,
+     "expect": {
+      "contains": "1 received"
+     }
+    }
+   ],
+   "probes": [
+    {
+     "label": "h1→h2 ping",
+     "node": "h1",
+     "argv": [
+      "ping",
+      "-c1",
+      "-W1",
+      "10.4.2.10"
+     ]
+    },
+    {
+     "label": "h1 라우팅",
+     "node": "h1",
+     "argv": [
+      "ip",
+      "route"
+     ]
+    },
+    {
+     "label": "r1 라우팅",
+     "node": "r1",
+     "argv": [
+      "ip",
+      "route"
+     ]
+    },
+    {
+     "label": "r2 라우팅",
+     "node": "r2",
+     "argv": [
+      "ip",
+      "route"
+     ]
+    }
+   ],
+   "definition": "04-l3-routing/04-l3-routing.clab.yml",
+   "prefix": "clab-04-l3-routing",
+   "topics": [
+    "왕복",
+    "리턴",
+    "라우팅"
+   ]
+  },
+  {
+   "id": "05",
+   "pack": "network",
+   "number": "05",
+   "dir": "05-lpm-blackhole",
+   "title": "05장 최장 접두사와 블랙홀",
+   "assessment": "fault",
+   "checks": [
+    {
+     "node": "h1",
+     "argv": [
+      "ping",
+      "-c1",
+      "-W2",
+      "10.5.2.10"
+     ],
+     "timeout": 30,
+     "expect": {
+      "contains": "1 received"
+     }
+    }
+   ],
+   "probes": [
+    {
+     "label": "r1 경로",
+     "node": "r1",
+     "argv": [
+      "ip",
+      "route"
+     ]
+    },
+    {
+     "label": "r1 목적지 선택",
+     "node": "r1",
+     "argv": [
+      "ip",
+      "route",
+      "get",
+      "10.5.2.10"
+     ]
+    },
+    {
+     "label": "대조군 ping",
+     "node": "h1",
+     "argv": [
+      "ping",
+      "-c1",
+      "-W1",
+      "10.5.2.11"
+     ]
+    }
+   ],
+   "definition": "05-lpm-blackhole/05-lpm-blackhole.clab.yml",
+   "prefix": "clab-05-lpm-blackhole",
+   "topics": [
+    "왕복",
+    "리턴",
+    "라우팅"
+   ]
+  },
+  {
+   "id": "06",
+   "pack": "network",
+   "number": "06",
+   "dir": "06-ttl-loop",
+   "title": "06장 TTL과 라우팅 루프",
+   "assessment": "fault",
+   "checks": [
+    {
+     "node": "r2",
+     "argv": [
+      "ip",
+      "route",
+      "show",
+      "default"
+     ],
+     "timeout": 30,
+     "expect": {
+      "contains": "unreachable default"
+     }
+    }
+   ],
+   "probes": [
+    {
+     "label": "r1 경로",
+     "node": "r1",
+     "argv": [
+      "ip",
+      "route"
+     ]
+    },
+    {
+     "label": "r2 경로",
+     "node": "r2",
+     "argv": [
+      "ip",
+      "route"
+     ]
+    }
+   ],
+   "definition": "06-ttl-loop/06-ttl-loop.clab.yml",
+   "prefix": "clab-06-ttl-loop",
+   "topics": [
+    "왕복",
+    "리턴",
+    "라우팅"
+   ]
+  },
+  {
+   "id": "07",
+   "pack": "network",
+   "number": "07",
+   "dir": "07-vxlan-overlay",
+   "title": "07장 VXLAN 오버레이",
+   "assessment": "fault",
+   "checks": [
+    {
+     "node": "vtep1",
+     "argv": [
+      "ping",
+      "-c1",
+      "-W2",
+      "192.168.100.2"
+     ],
+     "timeout": 30,
+     "expect": {
+      "contains": "1 received"
+     }
+    }
+   ],
+   "probes": [
+    {
+     "label": "vtep1 오버레이 ping",
+     "node": "vtep1",
+     "argv": [
+      "ping",
+      "-c1",
+      "-W1",
+      "192.168.100.2"
+     ]
+    },
+    {
+     "label": "vtep1 언더레이 ping",
+     "node": "vtep1",
+     "argv": [
+      "ping",
+      "-c1",
+      "-W1",
+      "10.7.2.1"
+     ]
+    },
+    {
+     "label": "vtep1 vxlan 설정",
+     "node": "vtep1",
+     "argv": [
+      "ip",
+      "-d",
+      "link",
+      "show",
+      "vxlan100"
+     ]
+    },
+    {
+     "label": "vtep2 vxlan 설정",
+     "node": "vtep2",
+     "argv": [
+      "ip",
+      "-d",
+      "link",
+      "show",
+      "vxlan100"
+     ]
+    },
+    {
+     "label": "vtep1 fdb",
+     "node": "vtep1",
+     "argv": [
+      "bridge",
+      "fdb",
+      "show",
+      "dev",
+      "vxlan100"
+     ]
+    }
+   ],
+   "definition": "07-vxlan-overlay/07-vxlan-overlay.clab.yml",
+   "prefix": "clab-07-vxlan-overlay",
+   "topics": [
+    "VXLAN"
+   ]
+  },
+  {
+   "id": "08",
+   "pack": "network",
+   "number": "08",
+   "dir": "08-tcp-3way",
+   "title": "08장 TCP 연결 증상 분류",
+   "assessment": "exploration",
+   "checks": [],
+   "probes": [
+    {
+     "label": "서버 리스너",
+     "node": "srv",
+     "argv": [
+      "ss",
+      "-lnt"
+     ]
+    },
+    {
+     "label": "방화벽",
+     "node": "fw",
+     "argv": [
+      "nft",
+      "list",
+      "ruleset"
+     ]
+    }
+   ],
+   "definition": "08-tcp-3way/08-tcp-3way.clab.yml",
+   "prefix": "clab-08-tcp-3way",
+   "topics": []
+  },
+  {
+   "id": "09",
+   "pack": "network",
+   "number": "09",
+   "dir": "09-conntrack",
+   "title": "09장 연결 추적",
+   "assessment": "exploration",
+   "checks": [],
+   "probes": [
+    {
+     "label": "연결 추적 제한",
+     "node": "nat",
+     "argv": [
+      "sysctl",
+      "net.netfilter.nf_conntrack_tcp_timeout_established"
+     ]
+    },
+    {
+     "label": "NAT 규칙",
+     "node": "nat",
+     "argv": [
+      "iptables",
+      "-t",
+      "nat",
+      "-S"
+     ]
+    },
+    {
+     "label": "연결 추적",
+     "node": "nat",
+     "argv": [
+      "conntrack",
+      "-L"
+     ]
+    }
+   ],
+   "definition": "09-conntrack/09-conntrack.clab.yml",
+   "prefix": "clab-09-conntrack",
+   "topics": [
+    "NAT",
+    "SNAT",
+    "DNAT",
+    "헤어핀"
+   ]
+  },
+  {
+   "id": "10",
+   "pack": "network",
+   "number": "10",
+   "dir": "10-nat-basics",
+   "title": "10장 NAT 기초",
+   "assessment": "fault",
+   "checks": [
+    {
+     "node": "cli",
+     "argv": [
+      "ping",
+      "-c1",
+      "-W2",
+      "10.10.2.10"
+     ],
+     "timeout": 30,
+     "expect": {
+      "contains": "1 received"
+     }
+    }
+   ],
+   "probes": [
+    {
+     "label": "cli→srv ping",
+     "node": "cli",
+     "argv": [
+      "ping",
+      "-c1",
+      "-W1",
+      "10.10.2.10"
+     ]
+    },
+    {
+     "label": "nat POSTROUTING",
+     "node": "nat",
+     "argv": [
+      "iptables",
+      "-t",
+      "nat",
+      "-S",
+      "POSTROUTING"
+     ]
+    },
+    {
+     "label": "nat conntrack",
+     "node": "nat",
+     "argv": [
+      "bash",
+      "-c",
+      "conntrack -L 2>/dev/null | head -5"
+     ]
+    },
+    {
+     "label": "cli 주소",
+     "node": "cli",
+     "argv": [
+      "ip",
+      "-br",
+      "addr"
+     ]
+    }
+   ],
+   "definition": "10-nat-basics/10-nat-basics.clab.yml",
+   "prefix": "clab-10-nat-basics",
+   "topics": [
+    "NAT",
+    "SNAT",
+    "DNAT",
+    "헤어핀"
+   ]
+  },
+  {
+   "id": "11",
+   "pack": "network",
+   "number": "11",
+   "dir": "11-symmetry-nat",
+   "title": "11장 비대칭 경로와 주소 변환",
+   "assessment": "fault",
+   "checks": [
+    {
+     "node": "cli",
+     "argv": [
+      "bash",
+      "-c",
+      "timeout 4 nc -w 2 10.11.2.10 443"
+     ],
+     "timeout": 30,
+     "expect": {
+      "contains": "pong"
+     }
+    }
+   ],
+   "probes": [
+    {
+     "label": "srtr 경로",
+     "node": "srtr",
+     "argv": [
+      "ip",
+      "route"
+     ]
+    },
+    {
+     "label": "재작성 규칙",
+     "node": "nat",
+     "argv": [
+      "nft",
+      "list",
+      "ruleset"
+     ]
+    }
+   ],
+   "definition": "11-symmetry-nat/11-symmetry-nat.clab.yml",
+   "prefix": "clab-11-symmetry-nat",
+   "topics": [
+    "NAT",
+    "SNAT",
+    "DNAT",
+    "헤어핀"
+   ]
+  },
+  {
+   "id": "12",
+   "pack": "network",
+   "number": "12",
+   "dir": "12-mtu-pmtud",
+   "title": "12장 MTU와 PMTUD",
+   "assessment": "fault",
+   "checks": [
+    {
+     "node": "h1",
+     "argv": [
+      "ping",
+      "-M",
+      "do",
+      "-c1",
+      "-W2",
+      "-s",
+      "1472",
+      "10.12.2.10"
+     ],
+     "timeout": 30,
+     "expect": {
+      "regex": "mtu\\s*[= ]\\s*1400"
+     },
+     "fallback": {
+      "node": "h1",
+      "argv": [
+       "ip",
+       "route",
+       "get",
+       "10.12.2.10"
+      ],
+      "timeout": 12,
+      "expect": {
+       "regex": "\\bmtu\\s+1400\\b",
+       "stream": "stdout",
+       "rc": [
+        0
+       ]
+      },
+      "label": "PMTU route cache"
+     }
+    }
+   ],
+   "probes": [
+    {
+     "label": "r1 차단 규칙",
+     "node": "r1",
+     "argv": [
+      "nft",
+      "list",
+      "ruleset"
+     ]
+    },
+    {
+     "label": "h1 경로 MTU",
+     "node": "h1",
+     "argv": [
+      "ip",
+      "route",
+      "get",
+      "10.12.2.10"
+     ]
+    },
+    {
+     "label": "r1 링크 MTU",
+     "node": "r1",
+     "argv": [
+      "ip",
+      "-br",
+      "link"
+     ]
+    }
+   ],
+   "definition": "12-mtu-pmtud/12-mtu-pmtud.clab.yml",
+   "prefix": "clab-12-mtu-pmtud",
+   "topics": [
+    "MTU",
+    "PMTUD",
+    "단편"
+   ]
+  },
+  {
+   "id": "13",
+   "pack": "network",
+   "number": "13",
+   "dir": "13-tunnel-mtu",
+   "title": "13장 오버레이 MTU",
+   "assessment": "fault",
+   "checks": [
+    {
+     "node": "vtep1",
+     "argv": [
+      "ping",
+      "-M",
+      "dont",
+      "-c1",
+      "-W2",
+      "-s",
+      "1400",
+      "192.168.100.2"
+     ],
+     "timeout": 30,
+     "expect": {
+      "contains": "1 received"
+     }
+    }
+   ],
+   "probes": [
+    {
+     "label": "vtep1 링크",
+     "node": "vtep1",
+     "argv": [
+      "ip",
+      "-d",
+      "link",
+      "show",
+      "vxlan100"
+     ]
+    },
+    {
+     "label": "vtep2 링크",
+     "node": "vtep2",
+     "argv": [
+      "ip",
+      "-d",
+      "link",
+      "show",
+      "vxlan100"
+     ]
+    },
+    {
+     "label": "중간 링크",
+     "node": "r1",
+     "argv": [
+      "ip",
+      "-br",
+      "link"
+     ]
+    }
+   ],
+   "definition": "13-tunnel-mtu/13-tunnel-mtu.clab.yml",
+   "prefix": "clab-13-tunnel-mtu",
+   "topics": [
+    "VXLAN",
+    "MTU",
+    "PMTUD",
+    "단편"
+   ]
+  },
+  {
+   "id": "14",
+   "pack": "network",
+   "number": "14",
+   "dir": "14-dns",
+   "title": "14장 DNS와 캐시",
+   "assessment": "fault",
+   "checks": [
+    {
+     "node": "cli",
+     "argv": [
+      "curl",
+      "--noproxy",
+      "*",
+      "-sS",
+      "--max-time",
+      "3",
+      "http://app.lab/"
+     ],
+     "timeout": 30,
+     "expect": {
+      "contains": "pong-from-srv2"
+     }
+    }
+   ],
+   "probes": [
+    {
+     "label": "캐시 응답",
+     "node": "cli",
+     "argv": [
+      "dig",
+      "+time=1",
+      "+tries=1",
+      "@10.14.0.53",
+      "app.lab"
+     ]
+    },
+    {
+     "label": "권한 응답",
+     "node": "cli",
+     "argv": [
+      "dig",
+      "+time=1",
+      "+tries=1",
+      "@10.14.0.54",
+      "app.lab"
+     ]
+    },
+    {
+     "label": "다중 A",
+     "node": "cli",
+     "argv": [
+      "dig",
+      "+time=1",
+      "+tries=1",
+      "@10.14.0.53",
+      "multi.lab"
+     ]
+    }
+   ],
+   "definition": "14-dns/14-dns.clab.yml",
+   "prefix": "clab-14-dns",
+   "topics": [
+    "DNS",
+    "도메인",
+    "캐시"
+   ]
+  },
+  {
+   "id": "15",
+   "pack": "network",
+   "number": "15",
+   "dir": "15-icmp-blocked",
+   "title": "15장 ICMP 차단",
+   "assessment": "fault",
+   "checks": [
+    {
+     "node": "h1",
+     "argv": [
+      "ping",
+      "-c1",
+      "-W2",
+      "10.15.2.10"
+     ],
+     "timeout": 30,
+     "expect": {
+      "contains": "1 received"
+     }
+    }
+   ],
+   "probes": [
+    {
+     "label": "방화벽 규칙",
+     "node": "fw",
+     "argv": [
+      "nft",
+      "list",
+      "ruleset"
+     ]
+    },
+    {
+     "label": "발신 경로",
+     "node": "h1",
+     "argv": [
+      "ip",
+      "route"
+     ]
+    }
+   ],
+   "definition": "15-icmp-blocked/15-icmp-blocked.clab.yml",
+   "prefix": "clab-15-icmp-blocked",
+   "topics": [
+    "MTU",
+    "PMTUD",
+    "단편"
+   ]
+  },
+  {
+   "id": "16",
+   "pack": "network",
+   "number": "16",
+   "dir": "16-nat-hairpin",
+   "title": "16장 헤어핀 NAT",
+   "assessment": "fault",
+   "checks": [
+    {
+     "node": "cli",
+     "argv": [
+      "curl",
+      "--noproxy",
+      "*",
+      "-sS",
+      "--max-time",
+      "3",
+      "http://10.16.99.1:8080/"
+     ],
+     "timeout": 30,
+     "expect": {
+      "contains": "pong-hairpin"
+     }
+    }
+   ],
+   "probes": [
+    {
+     "label": "NAT 규칙",
+     "node": "nat",
+     "argv": [
+      "iptables",
+      "-t",
+      "nat",
+      "-S"
+     ]
+    },
+    {
+     "label": "서버 경로",
+     "node": "srv",
+     "argv": [
+      "ip",
+      "route"
+     ]
+    },
+    {
+     "label": "연결 추적",
+     "node": "nat",
+     "argv": [
+      "conntrack",
+      "-L"
+     ]
+    }
+   ],
+   "definition": "16-nat-hairpin/16-nat-hairpin.clab.yml",
+   "prefix": "clab-16-nat-hairpin",
+   "topics": [
+    "NAT",
+    "SNAT",
+    "DNAT",
+    "헤어핀"
+   ]
+  },
+  {
+   "id": "17-ospf",
+   "pack": "network",
+   "number": "17",
+   "dir": "17-dynamic-routing",
+   "title": "17장 OSPF",
+   "assessment": "fault",
+   "checks": [
+    {
+     "node": "h1",
+     "argv": [
+      "ping",
+      "-c1",
+      "-W2",
+      "10.17.2.10"
+     ],
+     "timeout": 30,
+     "expect": {
+      "contains": "1 received"
+     }
+    }
+   ],
+   "probes": [
+    {
+     "label": "r1 OSPF",
+     "node": "r1",
+     "argv": [
+      "vtysh",
+      "-c",
+      "show ip ospf neighbor"
+     ]
+    },
+    {
+     "label": "r2 OSPF",
+     "node": "r2",
+     "argv": [
+      "vtysh",
+      "-c",
+      "show ip ospf neighbor"
+     ]
+    },
+    {
+     "label": "r1 경로",
+     "node": "r1",
+     "argv": [
+      "ip",
+      "route"
+     ]
+    },
+    {
+     "label": "r2 경로",
+     "node": "r2",
+     "argv": [
+      "ip",
+      "route"
+     ]
+    }
+   ],
+   "definition": "17-dynamic-routing/ospf.clab.yml",
+   "prefix": "clab-17-ospf",
+   "topics": [
+    "왕복",
+    "리턴",
+    "라우팅",
+    "OSPF",
+    "BGP"
+   ]
+  },
+  {
+   "id": "17-bgp",
+   "pack": "network",
+   "number": "17",
+   "dir": "17-dynamic-routing",
+   "title": "17장 BGP",
+   "assessment": "fault",
+   "checks": [
+    {
+     "node": "h1",
+     "argv": [
+      "ping",
+      "-c1",
+      "-W2",
+      "10.17.2.10"
+     ],
+     "timeout": 30,
+     "expect": {
+      "contains": "1 received"
+     }
+    }
+   ],
+   "probes": [
+    {
+     "label": "r1 BGP",
+     "node": "r1",
+     "argv": [
+      "vtysh",
+      "-c",
+      "show bgp ipv4 unicast summary"
+     ]
+    },
+    {
+     "label": "r2 BGP",
+     "node": "r2",
+     "argv": [
+      "vtysh",
+      "-c",
+      "show bgp ipv4 unicast summary"
+     ]
+    },
+    {
+     "label": "r1 경로",
+     "node": "r1",
+     "argv": [
+      "ip",
+      "route"
+     ]
+    },
+    {
+     "label": "r2 경로",
+     "node": "r2",
+     "argv": [
+      "ip",
+      "route"
+     ]
+    }
+   ],
+   "definition": "17-dynamic-routing/bgp.clab.yml",
+   "prefix": "clab-17-bgp",
+   "topics": [
+    "왕복",
+    "리턴",
+    "라우팅",
+    "OSPF",
+    "BGP"
+   ]
+  }
+ ],
+ "guides": {
+  "00": "00-onramp/README.md",
+  "01": "01-l2-arp/README.md",
+  "02": "02-bcast-loop/README.md",
+  "03": "03-vlan-trunk/README.md",
+  "04": "04-l3-routing/README.md",
+  "05": "05-lpm-blackhole/README.md",
+  "06": "06-ttl-loop/README.md",
+  "07": "07-vxlan-overlay/README.md",
+  "08": "08-tcp-3way/README.md",
+  "09": "09-conntrack/README.md",
+  "10": "10-nat-basics/README.md",
+  "11": "11-symmetry-nat/README.md",
+  "12": "12-mtu-pmtud/README.md",
+  "13": "13-tunnel-mtu/README.md",
+  "14": "14-dns/README.md",
+  "15": "15-icmp-blocked/README.md",
+  "16": "16-nat-hairpin/README.md",
+  "17-ospf": "17-dynamic-routing/README.md",
+  "17-bgp": "17-dynamic-routing/README.md"
+ }
+}
