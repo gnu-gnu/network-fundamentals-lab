@@ -209,8 +209,13 @@ def main():
         rc, out, err = lxc('exec', instance, '--', 'runuser', '-u', 'lab', '--', 'bash', '-c',
                            '. /etc/lab-shell.sh; lab 04', timeout=600)
         assert rc == 0, (out[-500:], err[-500:])
-        env = labd.state()['environment']
-        assert env['state'] == 'running' and env['runtime']['matches'] is False, env
+        view = labd.state()
+        env = view['environment']
+        # M1 lab-shell destroys the runner's topology behind its back (state running, runtime mismatch);
+        # M2 lab-shell first stops the runner's lesson through the runner (state idle, attempt closed).
+        assert env['runtime']['matches'] is False and env['state'] in ('running', 'idle'), env
+        if env['state'] == 'idle':
+            assert view['attempt'] is None, view
         job = labd.check()
         assert job['result']['error'] == 'conflict', job
         step('CLI: 웹 start 는 터미널 실습을 내리고 12장을 다시 올린다')

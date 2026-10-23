@@ -385,6 +385,10 @@ class AgentClientTests(unittest.TestCase):
             client.status('alice', fresh=True)
         self.assertGreater(len(self.calls), probes)
 
+    def test_every_protocol_action_has_a_deadline(self):
+        from runner.protocol import ACTIONS
+        self.assertEqual(set(agent_client.TIMEOUTS), set(ACTIONS))
+
     def test_only_owned_running_environments(self):
         client = agent_client.AgentClient(lxc=self.lxc)
         for account in ('bob', 'mallory'):

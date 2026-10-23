@@ -18,7 +18,7 @@ from .store import LOCK, STATE
 
 RUNNER_PATH = '/opt/netlab/current/runner/netlab-runner'
 INCARNATION_KEY = 'user.netlab.incarnation'
-TIMEOUTS = {'status': 30, 'start': 480, 'reset': 480, 'stop': 300, 'check': 180}
+TIMEOUTS = {'status': 30, 'start': 480, 'reset': 480, 'stop': 300, 'solve': 300, 'check': 180, 'probe': 90}
 MAX_RESPONSE = 64 * 1024 + 1024
 STATUS_CACHE_SECONDS = 2.0
 MISSING_CACHE_SECONDS = 60.0   # v1 VMs have no runner; do not probe them on every panel poll
