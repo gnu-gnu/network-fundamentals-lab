@@ -360,6 +360,21 @@ def smoke(run, instance, bundles, lessons=None, say=print, converge=180):
 GUEST_PERMISSIONS = ('getent group clab_admins >/dev/null || groupadd --system clab_admins; '
                      'id -nG lab | tr " " "\\n" | grep -qx clab_admins || usermod -aG clab_admins lab')
 
+# The runner never overwrites an existing work copy, and the network pack's work copies (~lab/network-lab)
+# come with the base image. Overlay the bundle's lesson files on the pristine and working copies so the
+# image's lessons are exactly the recorded bundle. Files the bundle does not carry are kept for v1 commands.
+GUEST_SYNC = r"""
+set -eu
+src=/opt/netlab/current/packs/network/files
+[ -d "$src" ] || exit 0
+for dst in /opt/network-lab-pristine /home/lab/network-lab; do
+  [ -d "$dst" ] || continue
+  cp -r --preserve=mode "$src"/. "$dst"/
+done
+[ -d /home/lab/network-lab ] && chown -R lab:lab /home/lab/network-lab
+true
+"""
+
 # Runs inside the builder after the smoke run: leave no learner-visible trace and no machine identity.
 GUEST_CLEAN = r"""
 set -eu
@@ -502,6 +517,9 @@ def finish_image(builder, alias, bundles, catalog, base, source='', lessons=None
         rc, out, err = run('exec', builder, '--', RUNNER_PATH, '--init')
         if rc != 0 or '"ok": true' not in out:
             raise ImageError(f'실행기 초기화 실패: {(err or out).strip()[-300:]}')
+        rc, out, err = run('exec', builder, '--', 'sh', '-c', GUEST_SYNC, timeout=300)
+        if rc != 0:
+            raise ImageError(f'작업 사본 동기화 실패: {(err or out).strip()[-300:]}')
         status = runner_call(run, builder, dict(action='status'))
         if status.get('installed') != catalog_bundles(catalog):
             raise ImageError(f'설치된 번들이 카탈로그와 다릅니다: {status.get("installed")}')
