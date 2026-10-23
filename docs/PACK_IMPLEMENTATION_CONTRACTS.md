@@ -241,7 +241,7 @@ M1의 개발 설치는 clean 스냅샷을 만든 뒤에 runner를 넣습니다. 
 
 | 항목 | 정한 값 |
 | --- | --- |
-| 이미지 빌드 | `packctl image`가 설정 이미지(또는 지정한 기반)에서 빌드 VM을 만들고, labd와 같은 실습 계정 권한 정리와 `lab-shell.sh`를 반영한 뒤 runner와 **카탈로그의 모든 팩** 번들을 한 릴리스로 설치합니다. 해설 훅이 있는 모든 레슨을 start → solve → 모든 task check pass → stop으로 확인해야 게시합니다 |
+| 이미지 빌드 | `packctl image`가 설정 이미지(또는 지정한 기반)에서 빌드 VM을 만들고, labd와 같은 실습 계정 권한 정리와 `lab-shell.sh`를 반영한 뒤 runner와 **카탈로그의 모든 팩** 번들을 한 릴리스로 설치합니다. 해설 훅이 있는 모든 레슨을 start → solve → 모든 task check pass(수렴 대기 최대 180초) → stop으로 확인해야 게시합니다. 실패하면 reset → solve → check를 한 번만 다시 하고 시도 횟수를 기록에 남깁니다 |
 | 게시 규칙 | 항상 새 별칭으로 게시하며 기존 별칭·이미지를 바꾸거나 지우지 않습니다. 실패하면 빌드 VM을 진단용으로 남깁니다. 게시 전 작업 사본·runner 상태·machine-id·SSH 호스트 키·세션 기록을 지웁니다 |
 | 이미지 기록 | `/var/lib/netlab/images/<별칭>.json`에 지문, 기반 이미지와 지문, 소스 기준, 릴리스 ID, runner 버전(소스 해시)·protocol, catalog revision, 팩별 bundle revision, smoke 결과를 남깁니다. 이미지 속성에도 릴리스·protocol·번들 맵을 적습니다 |
 | 연결 | `packctl activate`는 기록이 있고, 별칭이 기록한 지문을 가리키며, 번들 맵이 서버 카탈로그와 같은 이미지만 설정 `image`로 연결합니다. 실행기 없는 이전 이미지로 되돌릴 때만 `--legacy`를 씁니다 |

@@ -306,7 +306,8 @@ def runner_call(run, instance, request, timeout=900):
 
 def smoke(run, instance, bundles, lessons=None, say=print, converge=180):
     """Run every solvable lesson the way a learner's web panel does: start → solve → every task check
-    must pass within `converge` seconds → stop. Returns [{lesson, steps}]. Any other outcome stops the build."""
+    must pass within `converge` seconds → stop, with one reset → solve → check retry. Returns
+    [{lesson, steps, attempts}]. Any other outcome stops the build."""
     done = []
     for manifest, recipe, _ in bundles:
         for lesson_id, ldef in sorted(recipe['lessons'].items()):
@@ -323,24 +324,36 @@ def smoke(run, instance, bundles, lessons=None, say=print, converge=180):
                     raise ImageError(f'{lesson_id} {action} 실패: {response.get("error")} {response.get("message")}')
                 return response
 
-            say(f'  smoke {lesson_id}: start')
-            call('start', target_lesson=lesson_id, expected_bundle=bundle)
-            call('solve', lesson=lesson_id, expected_bundle=bundle)
-            steps = {}
-            for step in ldef.get('steps', {}):
-                deadline = time.time() + converge
-                while True:      # routing protocols converge tens of seconds after the fix
-                    result = call('check', lesson=lesson_id, expected_bundle=bundle, step=step)['result']
-                    if result['status'] == 'pass' or time.time() > deadline:
+            for attempt in (1, 2):
+                # One reset retry: some topologies (17 BGP) occasionally come up without a routing daemon on
+                # their first deploy in a fresh VM. The attempt count stays in the image record.
+                say(f'  smoke {lesson_id}: {"start" if attempt == 1 else "reset (retry)"}')
+                if attempt == 1:
+                    call('start', target_lesson=lesson_id, expected_bundle=bundle)
+                else:
+                    call('reset', lesson=lesson_id, expected_bundle=bundle)
+                call('solve', lesson=lesson_id, expected_bundle=bundle)
+                steps, failed = {}, None
+                for step in ldef.get('steps', {}):
+                    deadline = time.time() + converge
+                    while True:      # routing protocols converge tens of seconds after the fix
+                        result = call('check', lesson=lesson_id, expected_bundle=bundle, step=step)['result']
+                        if result['status'] == 'pass' or time.time() > deadline:
+                            break
+                        time.sleep(5)
+                    steps[step] = result['status']
+                    if result['status'] != 'pass':
+                        failed = (f'{lesson_id} {step}: 해설 적용 뒤에도 {result["status"]} '
+                                  f'{[i.get("message") or (i.get("detail") or "")[-120:] for i in result.get("items", [])]}')
                         break
-                    time.sleep(5)
-                steps[step] = result['status']
-                if result['status'] != 'pass':
-                    raise ImageError(f'{lesson_id} {step}: 해설 적용 뒤에도 {result["status"]} '
-                                     f'{[i.get("message") for i in result.get("items", [])]}')
+                if not failed:
+                    break
+                say(f'  smoke {lesson_id}: {failed}')
+                if attempt == 2:
+                    raise ImageError(failed)
             call('stop', lesson=lesson_id)
-            say(f'  smoke {lesson_id}: pass {steps}')
-            done.append(dict(lesson=lesson_id, steps=steps))
+            say(f'  smoke {lesson_id}: pass {steps} (attempt {attempt})')
+            done.append(dict(lesson=lesson_id, steps=steps, attempts=attempt))
     return done
 
 

@@ -154,6 +154,26 @@ class ImageBuildTests(unittest.TestCase):
         self.assertTrue(all(set(s['steps'].values()) == {'pass'} for s in record['smoke']))
         self.assertTrue(sleep.called)
 
+    def test_one_reset_retry_is_recorded(self):
+        host = FakeHost(self.catalog)
+        resets = []
+
+        def flaky(request):
+            if request['action'] == 'start' and request['target_lesson'] == 'network/12':
+                host.check = 'fail'
+            elif request['action'] == 'reset':
+                resets.append(request['lesson'])
+                host.check = 'pass'
+            return FakeHost.runner(host, request)
+        host.runner = flaky
+        clock = iter(range(0, 10 ** 6, 100))
+        with patch.object(packctl.time, 'time', side_effect=lambda: next(clock)), patch.object(packctl.time, 'sleep'):
+            record = self.build(host)
+        self.assertEqual(resets, ['network/12'])
+        attempts = {s['lesson']: s['attempts'] for s in record['smoke']}
+        self.assertEqual(attempts['network/12'], 2)
+        self.assertEqual({a for lesson, a in attempts.items() if lesson != 'network/12'}, {1})
+
     def test_existing_alias_and_incomplete_bundles_are_refused_before_any_vm(self):
         with self.assertRaisesRegex(packctl.ImageError, '이미 있는'):
             self.build(FakeHost(self.catalog), alias='netlab')
