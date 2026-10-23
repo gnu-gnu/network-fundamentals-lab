@@ -1,0 +1,30 @@
+# 학습 팩 레슨 메타데이터. 진단·채점 명령은 고정 argv 이며 모델이 생성하지 않는다.
+id = "02"
+number = "02"
+title = "02장 브로드캐스트와 L2 루프"
+topology = "02-bcast-loop.clab.yml"
+assessment = "observe"
+concept = "스위치는 출발지 MAC을 학습한다. 이더넷 프레임에는 IP TTL 같은 홉 제한이 없어 L2 루프가 브로드캐스트를 증폭시킨다. STP는 중복 경로를 차단한다."
+goal = "MAC 학습과 루프·STP를 관찰한다. 링크를 자동으로 올리지 않는다."
+fault = "배포 시 sw1 eth3은 down이므로 루프가 없다. 학습자가 링크를 올릴 때 루프가 생긴다."
+topics = []
+hints = [
+  "관찰 결과를 근거로 원인을 좁혀 보세요.",
+  "양 끝의 설정과 왕복 경로를 비교해 보세요.",
+  "정상 조건과 실제 상태의 차이를 확인하세요.",
+]
+
+[[probes]]
+label = "sw1 브리지 포트"
+node = "sw1"
+argv = ["bridge", "-d", "link"]
+
+[[probes]]
+label = "sw2 브리지 포트"
+node = "sw2"
+argv = ["bridge", "-d", "link"]
+
+[[probes]]
+label = "sw1 STP"
+node = "sw1"
+argv = ["ip", "-d", "link", "show", "br0"]

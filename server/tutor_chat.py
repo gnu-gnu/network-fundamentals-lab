@@ -8,6 +8,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 import knowledge
 import netlab_tutor as tutor
+import packs
 from netlab import db as _db
 from netlab.paths import TUTOR_DB as DB
 
@@ -214,12 +215,7 @@ def respond(sid, jid, instance, inspect, share_terminal=False, shared_vm=False):
         active_inspect = inspect
         inspect = inspect or needs_observation(job['question'])
         chapter = tutor.deployed_chapter(instance)
-        rc, names, _ = tutor.lxc_exec(instance, ['docker', 'ps', '--format', '{{.ID}} {{.Names}}'], 20)
-        selected_meta = tutor.CHAPTERS.get(chapter)
-        if selected_meta:
-            names = '\n'.join(line for line in names.splitlines()
-                              if any(name.startswith(selected_meta['prefix'] + '-') for name in line.split()))
-        context = json.dumps(sorted(names.splitlines())) if rc == 0 else 'unknown'
+        context = tutor.deployment_context(instance, chapter)
         changed = bool(session['context'] and session['context'] != context)
         if changed:
             history = []
@@ -247,24 +243,24 @@ def respond(sid, jid, instance, inspect, share_terminal=False, shared_vm=False):
             evidence.append(terminal_context(instance))
         if inspect and meta:
             def collect(probe):
-                label, node, argv = probe
+                label, node, argv = probe['label'], probe['node'], probe['argv']
                 started = time.time()
                 try:
-                    rc, out, err = tutor.node_exec(instance, meta['prefix'], node, argv, 12)
+                    rc, out, err = tutor.node_exec(instance, meta, node, argv, 12)
                     return dict(label=label, node=node, time=started, rc=rc,
                                          origin='tutor', active=not passive_probe(argv),
                                          output=(out + err)[:2000], truncated=len(out + err) > 2000)
                 except Exception:
                     return dict(label=label, time=started, error='진단 시간 초과 또는 실행 실패')
-            passive = [probe for probe in meta['probes'] if passive_probe(probe[2])]
+            passive = [probe for probe in meta['probes'] if passive_probe(probe['argv'])]
             with ThreadPoolExecutor(max_workers=3) as workers:
                 evidence.extend(workers.map(collect, passive))
             if active_inspect:
                 # Active probes remain ordered; never race traffic and cache reads.
-                evidence.extend(collect(probe) for probe in meta['probes'] if not passive_probe(probe[2]))
+                evidence.extend(collect(probe) for probe in meta['probes'] if not passive_probe(probe['argv']))
             result = tutor.check(instance, chapter) if active_inspect else {'status': 'passive_only', 'passed': None}
-            if meta.get('observational') or meta.get('assessment_mode') == 'exploration':
-                result = {'status': meta.get('assessment_mode', 'observational'), 'passed': None}
+            if not packs.graded(meta):
+                result = {'status': 'observational' if meta['assessment'] == 'observe' else meta['assessment'], 'passed': None}
             evidence.append(dict(label='자동 검증 결과(개념 이해와 별도)', time=time.time(),
                                  origin='tutor', active=active_inspect,
                                  output=json.dumps(result, ensure_ascii=False)))
@@ -315,10 +311,10 @@ eth0의 10.99.99.0/24는 containerlab 관리망이다. 실습 데이터 경로�
                     'chapter_selection': '실행 중인 실습 중 가장 최근 컨테이너가 생성된 단원. 공용 VM에서는 다른 방문자가 바꿀 수 있음.',
                     'title': meta.get('title') if meta else None,
                     'goal': meta.get('goal') if meta else None,
-                    'core_concept': meta.get('core_concept') if meta else None,
+                    'core_concept': meta.get('concept') if meta else None,
                     'help_level': job['help_level'], 'mode': job['mode'], 'shared_vm': shared_vm,
                     'initial_fault_not_current_fact': meta.get('fault') if meta and job['help_level'] >= 2 else None,
-                    'observational': meta.get('observational', False) if meta else False,
+                    'observational': meta['assessment'] == 'observe' if meta else False,
                     'learning_phase': ('reflection' if inspect and result.get('status') == 'passed' else
                                        'investigation' if inspect else 'orientation' if not history else 'discussion'),
                     'verification': result, 'observations': evidence,

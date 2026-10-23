@@ -1,0 +1,35 @@
+# 학습 팩 레슨 메타데이터. 진단·채점 명령은 고정 argv 이며 모델이 생성하지 않는다.
+id = "05"
+number = "05"
+title = "05장 최장 접두사와 블랙홀"
+topology = "05-lpm-blackhole.clab.yml"
+assessment = "fault"
+concept = "라우팅은 가장 긴 접두사부터 선택한다. 더 구체적인 /32 블랙홀은 정상 /24 연결 경로보다 우선한다."
+goal = "10.5.2.10과 대조군 .11의 차이를 설명하고 통신을 회복한다."
+fault = "r1에 10.5.2.10/32 blackhole이 있다."
+topics = ["왕복", "리턴", "라우팅"]
+hints = [
+  "관찰 결과를 근거로 원인을 좁혀 보세요.",
+  "양 끝의 설정과 왕복 경로를 비교해 보세요.",
+  "정상 조건과 실제 상태의 차이를 확인하세요.",
+]
+
+[[checks]]
+node = "h1"
+argv = ["ping", "-c1", "-W2", "10.5.2.10"]
+expect = { contains = "1 received" }
+
+[[probes]]
+label = "r1 경로"
+node = "r1"
+argv = ["ip", "route"]
+
+[[probes]]
+label = "r1 목적지 선택"
+node = "r1"
+argv = ["ip", "route", "get", "10.5.2.10"]
+
+[[probes]]
+label = "대조군 ping"
+node = "h1"
+argv = ["ping", "-c1", "-W1", "10.5.2.11"]

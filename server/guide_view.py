@@ -48,7 +48,7 @@ def inline(text, document):
 
 def body(document):
     lines = document['text'].splitlines()
-    if document['kind'] == 'topology':
+    if document['kind'] == 'definition':
         return '<pre><code>' + '\n'.join('<span id="L%d">%s</span>' % (i, html.escape(line)) for i, line in enumerate(lines, 1)) + '</code></pre>'
     out, i = [], 0
     while i < len(lines):

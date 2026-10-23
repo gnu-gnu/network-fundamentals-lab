@@ -19,7 +19,7 @@ class KnowledgeTests(unittest.TestCase):
     def test_current_chapter_guide_and_topology_are_included(self):
         refs = knowledge.retrieve('01', 'ARP 테이블이 비어 있는 이유는?')
         self.assertEqual(refs[0]['path'], '01-l2-arp/README.md')
-        self.assertTrue(any(r['kind'] == 'topology' for r in refs))
+        self.assertTrue(any(r['kind'] == 'definition' for r in refs))
         self.assertTrue(any(r['kind'] == 'wiki' for r in refs))
         self.assertLessEqual(sum(len(r['text']) for r in refs), 14000)
 
@@ -34,7 +34,7 @@ class KnowledgeTests(unittest.TestCase):
 
     def test_ospf_does_not_receive_bgp_topology(self):
         refs = knowledge.retrieve('17-ospf', '인접 관계 area OSPF')
-        topology = [r['path'] for r in refs if r['kind'] == 'topology']
+        topology = [r['path'] for r in refs if r['kind'] == 'definition']
         self.assertEqual(topology, ['17-dynamic-routing/ospf.clab.yml'])
 
     def test_sources_have_real_ids_hashes_and_line_numbers(self):
@@ -45,9 +45,12 @@ class KnowledgeTests(unittest.TestCase):
             self.assertIn(ref['text'], source['text'])
         self.assertIsNone(knowledge.source('../../etc/passwd'))
 
-    def test_generated_corpus_matches_repository_sources(self):
+    def test_generated_corpus_and_packs_match_repository_sources(self):
         import build_knowledge
-        self.assertEqual(json.loads(knowledge.CORPUS.read_text()), build_knowledge.build())
+        import packs
+        expected_packs, expected_corpus = build_knowledge.build()
+        self.assertEqual(json.loads(knowledge.CORPUS.read_text()), expected_corpus)
+        self.assertEqual(json.loads(packs.PACKS_FILE.read_text()), expected_packs)
 
     def test_generic_observation_request_does_not_mix_unrelated_labs(self):
         refs = knowledge.retrieve('01', '이 실습에서 뭘 관찰하면 될까? 현재 상태를 근거로 네 문장으로 설명해 줘.')

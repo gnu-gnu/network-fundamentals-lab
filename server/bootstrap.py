@@ -133,6 +133,7 @@ def pack_labs(output):
     # Explicit curriculum allowlist: never copy server secrets or .git into guests.
     roots = [p for p in repo.iterdir() if p.is_dir() and re.match(r'^\d\d-', p.name)]
     roots += [repo / n for n in ('README.md', 'clab.sh', 'checkpoints')]
+    roots += [p for p in (repo / 'pack.toml',) if p.is_file()]
     with tarfile.open(output, 'w') as archive:
         def keep(info):
             if info.issym() or info.islnk():

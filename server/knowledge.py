@@ -1,9 +1,14 @@
-"""Chapter-aware guide retrieval with SQLite FTS5 and traceable source IDs."""
+"""Lesson-aware guide retrieval with SQLite FTS5 and traceable source IDs.
+
+Documents belong to a pack and a lesson directory; what counts as a solution, which
+lines give the answer away and which words widen a search come from the pack manifest.
+"""
 import json
 from pathlib import Path
 import re
 import sqlite3
 import threading
+import packs
 
 CORPUS = Path(__file__).with_name('knowledge') / 'corpus.json'
 LOCK = threading.RLock()
@@ -11,6 +16,10 @@ INDEX = None
 STAMP = None
 DOCUMENTS = {}
 REVISION = ''
+# Language-level giveaways, independent of any pack (pack.tutor.redact adds the commands).
+SOLUTION_HEADINGS = r'정답|해설|해결|수정|고장|fault|solution|walkthrough'
+SOLUTION_WORDS = ['고장', '정답', '의도적', '불일치']
+GENERIC = ('현재', '지금', '방금', '상태', '실습', '설명', '문장', '근거', '관찰', '알려', '정리', '이유', '어떻게', '무엇', '뭘', '될까', '정도', '고쳤')
 
 
 def sections(text):
@@ -40,11 +49,11 @@ def load():
     corpus = json.loads(CORPUS.read_text())
     index = sqlite3.connect(':memory:', check_same_thread=False)
     index.row_factory = sqlite3.Row
-    index.execute('CREATE VIRTUAL TABLE snippets USING fts5(doc UNINDEXED, chapter UNINDEXED, kind UNINDEXED, path UNINDEXED, title, line UNINDEXED, text)')
+    index.execute('CREATE VIRTUAL TABLE snippets USING fts5(doc UNINDEXED, dir UNINDEXED, kind UNINDEXED, path UNINDEXED, title, line UNINDEXED, text)')
     for document in corpus['documents']:
         for title, line, text in sections(document['text']):
             index.execute('INSERT INTO snippets VALUES (?,?,?,?,?,?,?)',
-                          (document['id'], document['chapter'], document['kind'], document['path'], title, line, text))
+                          (document['id'], document['dir'], document['kind'], document['path'], title, line, text))
     if INDEX:
         INDEX.close()
     INDEX, STAMP = index, stamp
@@ -58,29 +67,51 @@ def allow_solution(question):
     return bool(re.search(r'정답|해설|해결\s*방법|수정\s*명령|구체|고치는\s*방법|명령.{0,8}(알려|보여)|walkthrough|solution', question, re.I))
 
 
+def definition_label(document):
+    pack = packs.PACKS.get(document.get('pack'))
+    return pack['files']['definition_label'] if pack else '정의 파일'
+
+
 def display_title(document):
-    chapter = document.get('chapter', '')
+    number = document.get('number', '')
     kind = document.get('kind')
-    if kind == 'topology':
-        return (chapter + '장 ' if chapter else '') + '참고 토폴로지'
+    if kind == 'definition':
+        return (number + '장 ' if number else '') + definition_label(document)
     if kind == 'wiki':
         heading = next((line.lstrip('# ').strip() for line in document.get('text', '').splitlines() if line.startswith('# ')), '')
         return '개념 해설' + (' · ' + heading if heading else '')
-    return (chapter + '장 ' if chapter else '') + ('실습 해설' if kind == 'solution' else '교재')
+    return (number + '장 ' if number else '') + ('실습 해설' if kind == 'solution' else '교재')
 
 
 def relevant(document, chapter):
-    if document['chapter'] != (chapter or '')[:2]:
+    """Guide, solution and the lesson's own definition file from the lesson directory."""
+    lesson = packs.lesson(chapter)
+    if not lesson or document['pack'] != lesson['pack'] or document['dir'] != lesson['dir']:
         return False
-    if chapter and chapter.startswith('17-') and document['kind'] == 'topology':
-        return chapter.split('-', 1)[1] in document['path']
+    if document['kind'] == 'definition' and lesson.get('definition'):
+        return document['path'] == lesson['definition']
     return True
 
 
+def permitted_dirs(question, lesson):
+    """Lesson directories a question may draw from: the current one, numbers it names, topics it mentions."""
+    allowed = {lesson['dir']} if lesson else set()
+    numbers = set(re.findall(r'\b(\d{2})\s*장', question))
+    for item in packs.LESSONS.values():
+        if item['number'] in numbers or any(re.search(topic, question, re.I) for topic in item['topics']):
+            allowed.add(item['dir'])
+    return allowed
+
+
 def retrieve(chapter, question, solution=False, limit=4, budget=14000, help_level=None):
-    """Current guide + topology first, then relevant cross-chapter/wiki sections."""
+    """Current guide + definition first, then relevant cross-lesson/wiki sections."""
     with LOCK:
         load()
+        lesson = packs.lesson(chapter)
+        # Unknown lesson ids never match a directory; an empty id ranks wiki pages first as before.
+        lesson_dir = lesson['dir'] if lesson else (chapter or '')
+        redact = '|'.join(packs.redact_patterns(lesson))
+        giveaway = '|'.join(packs.redact_patterns(lesson) + SOLUTION_WORDS)
         selected, used = [], 0
 
         def add(document, title, line, text, cap):
@@ -88,23 +119,22 @@ def retrieve(chapter, question, solution=False, limit=4, budget=14000, help_leve
             if help_level is not None and help_level < 3:
                 if document['kind'] == 'solution':
                     return
-                if document['kind'] == 'topology':
+                if document['kind'] == 'definition':
                     # Comments often disclose the deliberately broken setting.
                     text = '\n'.join(row.split('#', 1)[0] for row in text.splitlines())
                 else:
                     safe = []
                     for heading, _, block in sections(text):
-                        if re.search(r'정답|해설|해결|수정|고장|fault|solution|walkthrough', heading, re.I):
+                        if re.search(SOLUTION_HEADINGS, heading, re.I):
                             continue
-                        safe.extend(row for row in block.splitlines() if not re.search(
-                            r'ip route (add|replace|del)|iptables .* (-A|-D|-F)|고장|정답|의도적|불일치', row))
+                        safe.extend(row for row in block.splitlines() if not (giveaway and re.search(giveaway, row)))
                     text = '\n'.join(safe)
-                text = '\n'.join(row for row in text.splitlines() if not re.search(
-                    r'ip route (add|replace|del)|iptables .* (-A|-D|-F)|fix\.sh', row))
+                if redact:
+                    text = '\n'.join(row for row in text.splitlines() if not re.search(redact, row))
             cap = min(cap, budget - used)
             if cap < 150:
                 return
-            if any(s['document'] == document['id'] and (text in s['text'] or document['kind'] == 'topology') for s in selected):
+            if any(s['document'] == document['id'] and (text in s['text'] or document['kind'] == 'definition') for s in selected):
                 return
             chunk = text[:cap]
             selected.append(dict(citation='G' + str(len(selected) + 1), document=document['id'],
@@ -113,21 +143,15 @@ def retrieve(chapter, question, solution=False, limit=4, budget=14000, help_leve
                                  text=chunk, truncated=len(text) > cap, revision=REVISION))
             used += len(chunk)
 
-        for kind, cap in (('guide', min(4000, budget // 3)), ('topology', min(2500, budget // 5))):
+        for kind, cap in (('guide', min(4000, budget // 3)), ('definition', min(2500, budget // 5))):
             for doc in DOCUMENTS.values():
                 if doc['kind'] == kind and relevant(doc, chapter):
-                    add(doc, '현재 장 원문' if kind == 'guide' else '참고 토폴로지(현재 상태 아님)', 1, doc['text'], cap)
+                    add(doc, '현재 장 원문' if kind == 'guide' else definition_label(doc) + '(현재 상태 아님)', 1, doc['text'], cap)
         # Split adjacent Latin/Korean terms, retaining exact node names and addresses.
         query = re.sub(r'([A-Za-z0-9])([가-힣])|([가-힣])([A-Za-z0-9])', r'\1\3 \2\4', question)
         tokens = re.findall(r'[\w]+', query, re.UNICODE)
-        generic = ('현재', '지금', '방금', '상태', '실습', '설명', '문장', '근거', '관찰', '알려', '정리', '이유', '어떻게', '무엇', '뭘', '될까', '정도', '고쳤')
-        tokens = [t for t in tokens if not any(t.startswith(word) for word in generic)]
-        for needle, aliases in (
-            (r'ARP|MAC|이웃', ['ARP', 'MAC']),
-            (r'왕복|돌아오|리턴|라우팅', ['라우팅', '왕복', 'route', 'return']),
-            (r'MTU|큰\s*패킷|단편|터널', ['MTU', 'PMTUD', 'VXLAN']),
-            (r'캐시|DNS|도메인', ['DNS', 'TTL', '캐시']),
-            (r'NAT|주소\s*변환|헤어핀', ['NAT', 'SNAT', 'DNAT', '헤어핀'])):
+        tokens = [t for t in tokens if not any(t.startswith(word) for word in GENERIC)]
+        for needle, aliases in packs.synonyms(lesson):
             if re.search(needle, question, re.I):
                 tokens.extend(aliases)
         terms = list(dict.fromkeys(t for t in tokens if len(t) >= 2))[:32]
@@ -139,29 +163,19 @@ def retrieve(chapter, question, solution=False, limit=4, budget=14000, help_leve
             match = ' OR '.join('"' + t.replace('"', '""') + '"' for t in terms)
             rows = INDEX.execute('SELECT *,bm25(snippets) AS rank FROM snippets WHERE snippets MATCH ? AND (? OR kind != ?) ORDER BY rank LIMIT 80',
                                  (match, int(solution), 'solution')).fetchall()
-            requested_chapters = set(re.findall(r'\b(\d{2})\s*장', question))
-            for pattern, chapters in (
-                (r'ARP|이웃\s*테이블', {'01'}), (r'VLAN|트렁크', {'03'}),
-                (r'왕복|리턴|라우팅', {'04', '05', '06', '17'}),
-                (r'VXLAN', {'07', '13'}), (r'MTU|PMTUD|단편', {'12', '13', '15'}),
-                (r'DNS|도메인|캐시', {'14'}), (r'NAT|SNAT|DNAT|헤어핀', {'09', '10', '11', '16'}),
-                (r'OSPF|BGP', {'17'})):
-                if re.search(pattern, question, re.I):
-                    requested_chapters.update(chapters)
             if chapter:
                 # Shared node names (h1/r1) must not pull unrelated lab scenarios.
-                permitted = requested_chapters | {chapter[:2]}
-                rows = [r for r in rows if r['kind'] == 'wiki' or r['chapter'] in permitted]
-            rows = sorted(rows, key=lambda r: (0 if r['chapter'] == (chapter or '')[:2] else 1,
-                                               r['rank']))
+                permitted = permitted_dirs(question, lesson)
+                rows = [r for r in rows if r['kind'] == 'wiki' or r['dir'] in permitted]
+            rows = sorted(rows, key=lambda r: (0 if r['dir'] == lesson_dir else 1, r['rank']))
             wiki = next((r for r in sorted(rows, key=lambda r: r['rank']) if r['kind'] == 'wiki'), None)
             if wiki:
                 rows = [wiki] + [r for r in rows if r is not wiki]
             count = min(2, len(linked_wikis))
             for row in rows:
                 doc = DOCUMENTS[row['doc']]
-                if chapter and chapter.startswith('17-') and doc['kind'] == 'topology' and not relevant(doc, chapter):
-                    continue
+                if lesson and doc['kind'] == 'definition' and doc['dir'] == lesson['dir'] and not relevant(doc, chapter):
+                    continue     # another variant of the same lesson directory
                 before = len(selected)
                 add(doc, row['title'], row['line'], row['text'], 2800)
                 count += len(selected) - before

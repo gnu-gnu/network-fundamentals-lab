@@ -1,0 +1,25 @@
+# 학습 팩 레슨 메타데이터. 진단·채점 명령은 고정 argv 이며 모델이 생성하지 않는다.
+id = "00"
+number = "00"
+title = "00장 온램프"
+topology = "playground.clab.yml"
+assessment = "observe"
+concept = "인터페이스의 주소·서브넷과 링크 상태를 구분하고 명령 출력의 근거를 읽는다."
+goal = "주소·인터페이스·ping 출력을 읽는다."
+fault = "고장 없음. 도구를 연습하는 관찰 실습."
+topics = []
+hints = [
+  "관찰 결과를 근거로 원인을 좁혀 보세요.",
+  "양 끝의 설정과 왕복 경로를 비교해 보세요.",
+  "정상 조건과 실제 상태의 차이를 확인하세요.",
+]
+
+[[probes]]
+label = "h1 주소"
+node = "h1"
+argv = ["ip", "-br", "addr"]
+
+[[probes]]
+label = "h1 이웃"
+node = "h1"
+argv = ["ip", "neigh"]

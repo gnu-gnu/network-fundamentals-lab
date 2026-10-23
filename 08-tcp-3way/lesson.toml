@@ -1,0 +1,25 @@
+# 학습 팩 레슨 메타데이터. 진단·채점 명령은 고정 argv 이며 모델이 생성하지 않는다.
+id = "08"
+number = "08"
+title = "08장 TCP 연결 증상 분류"
+topology = "08-tcp-3way.clab.yml"
+assessment = "exploration"
+concept = "SYN 무응답과 RST는 다르다. 서버 리스너 부재와 중간 방화벽 REJECT는 둘 다 RST를 만들 수 있어 출처를 관찰해야 한다."
+goal = "타임아웃과 RST의 발신 주체를 구분한다."
+fault = "6060 정상, 8080 DROP, 9090 리스너 없음, 7070 방화벽 RST. 수정은 부록이다."
+topics = []
+hints = [
+  "관찰 결과를 근거로 원인을 좁혀 보세요.",
+  "양 끝의 설정과 왕복 경로를 비교해 보세요.",
+  "정상 조건과 실제 상태의 차이를 확인하세요.",
+]
+
+[[probes]]
+label = "서버 리스너"
+node = "srv"
+argv = ["ss", "-lnt"]
+
+[[probes]]
+label = "방화벽"
+node = "fw"
+argv = ["nft", "list", "ruleset"]

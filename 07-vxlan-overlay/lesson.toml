@@ -1,0 +1,45 @@
+# 학습 팩 레슨 메타데이터. 진단·채점 명령은 고정 argv 이며 모델이 생성하지 않는다.
+id = "07"
+number = "07"
+title = "07장 VXLAN 오버레이"
+topology = "07-vxlan-overlay.clab.yml"
+assessment = "fault"
+concept = "VXLAN은 L3 언더레이 위에 L2 오버레이를 만든다. 언더레이 도달성만으로 충분하지 않고 VNI·VTEP 등의 일치가 필요하다."
+goal = "vtep1 에서 오버레이 주소 192.168.100.2 로 ping 이 통해야 한다."
+fault = "vtep2 의 VXLAN VNI 가 200 으로 설정돼 vtep1(100)과 불일치. 언더레이(L3)는 정상이라 outer 패킷은 도착하지만 VNI 가 달라 조용히 버려진다."
+topics = ["VXLAN"]
+hints = [
+  "증상을 정확히 나눠보세요. 언더레이(10.7.x)는 되는데 오버레이(192.168.100.x)만 안 되나요?",
+  "VXLAN 은 양쪽 끝이 합의해야 성립합니다. 한쪽 설정만 보지 말고 vtep1 과 vtep2 를 나란히 비교해 보세요.",
+  "양쪽 vxlan 인터페이스의 VNI(vxlan id)를 비교하세요. 값이 다르면 패킷은 도착해도 조용히 버려집니다.",
+]
+
+[[checks]]
+node = "vtep1"
+argv = ["ping", "-c1", "-W2", "192.168.100.2"]
+expect = { contains = "1 received" }
+
+[[probes]]
+label = "vtep1 오버레이 ping"
+node = "vtep1"
+argv = ["ping", "-c1", "-W1", "192.168.100.2"]
+
+[[probes]]
+label = "vtep1 언더레이 ping"
+node = "vtep1"
+argv = ["ping", "-c1", "-W1", "10.7.2.1"]
+
+[[probes]]
+label = "vtep1 vxlan 설정"
+node = "vtep1"
+argv = ["ip", "-d", "link", "show", "vxlan100"]
+
+[[probes]]
+label = "vtep2 vxlan 설정"
+node = "vtep2"
+argv = ["ip", "-d", "link", "show", "vxlan100"]
+
+[[probes]]
+label = "vtep1 fdb"
+node = "vtep1"
+argv = ["bridge", "fdb", "show", "dev", "vxlan100"]

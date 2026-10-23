@@ -1,0 +1,41 @@
+# 학습 팩 레슨 메타데이터. 진단·채점 명령은 고정 argv 이며 모델이 생성하지 않는다.
+id = "03"
+number = "03"
+title = "03장 VLAN과 트렁크"
+topology = "03-vlan-trunk.clab.yml"
+assessment = "fault"
+concept = "같은 IP 서브넷 설정만으로 L2 연결이 생기지 않는다. VLAN별 브로드캐스트 도메인과 양쪽 트렁크의 VLAN 허용이 일치해야 한다."
+goal = "VLAN 10 h1↔h2 통신을 회복하고 VLAN 20 h3 격리를 유지한다."
+fault = "sw2 트렁크 eth2에 VLAN 10이 누락돼 있다."
+topics = ["VLAN", "트렁크"]
+hints = [
+  "관찰 결과를 근거로 원인을 좁혀 보세요.",
+  "양 끝의 설정과 왕복 경로를 비교해 보세요.",
+  "정상 조건과 실제 상태의 차이를 확인하세요.",
+]
+
+[[checks]]
+node = "h1"
+argv = ["ping", "-c1", "-W2", "10.3.10.2"]
+expect = { contains = "1 received" }
+
+[[checks]]
+node = "h1"
+argv = ["ping", "-c1", "-W2", "10.3.10.3"]
+expect = { contains = "0 received", stream = "stdout", rc = [0, 1] }
+timeout = 15
+
+[[probes]]
+label = "sw1 VLAN"
+node = "sw1"
+argv = ["bridge", "vlan", "show"]
+
+[[probes]]
+label = "sw2 VLAN"
+node = "sw2"
+argv = ["bridge", "vlan", "show"]
+
+[[probes]]
+label = "h1 이웃"
+node = "h1"
+argv = ["ip", "neigh"]

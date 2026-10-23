@@ -1,0 +1,40 @@
+# 학습 팩 레슨 메타데이터. 진단·채점 명령은 고정 argv 이며 모델이 생성하지 않는다.
+id = "01"
+number = "01"
+title = "01장 L2 인접성 & ARP"
+topology = "01-l2-arp.clab.yml"
+assessment = "observe"
+concept = "같은 서브넷은 목적지 MAC을 ARP로 찾는다. 다른 서브넷은 경로와 다음 홉이 필요하며 다음 홉 MAC을 찾는다."
+goal = "ARP 로 MAC 을 학습하는 과정과, 라우터 없이 다른 서브넷이 왜 안 되는지를 관찰한다."
+fault = "이 챕터엔 심어둔 고장이 없다. 같은 L2 세그먼트에서 ARP 로 서로를 찾고, 다른 서브넷은 라우터가 없어 의도적으로 unreachable 인 것을 관찰하는 실습이다."
+topics = ["ARP", '이웃\s*테이블']
+hints = [
+  "h1 에서 h2(10.10.10.2)로 ping 해보고, ip neigh 로 ARP 테이블에 MAC 이 학습되는지 보세요.",
+  "sw(스위치)의 bridge fdb 에 각 호스트 MAC 이 어느 포트에서 학습됐는지 관찰하세요.",
+  "실습 B에서 h2 주소를 10.10.20.2/24로 바꾼 뒤 다른 서브넷으로 ping 하면 왜 'Network unreachable'인지 생각해 보세요.",
+]
+
+[[probes]]
+label = "h1 ARP 테이블"
+node = "h1"
+argv = ["ip", "neigh"]
+
+[[probes]]
+label = "h1 실습 주소(관리망 제외)"
+node = "h1"
+argv = ["ip", "-br", "addr", "show", "dev", "eth1"]
+
+[[probes]]
+label = "h2 실습 주소와 MAC"
+node = "h2"
+argv = ["ip", "addr", "show", "dev", "eth1"]
+
+[[probes]]
+label = "h3 실습 주소와 MAC"
+node = "h3"
+argv = ["ip", "addr", "show", "dev", "eth1"]
+
+[[probes]]
+label = "sw 브리지 MAC"
+node = "sw"
+argv = ["bash", "-c", "bridge fdb show 2>/dev/null | grep -v permanent | head"]

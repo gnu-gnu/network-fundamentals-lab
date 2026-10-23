@@ -21,13 +21,13 @@ import subprocess
 import sys
 import urllib.request
 from netlab.paths import TUTOR_CONFIG_PATH as TUTOR_CFG
-from tutor_chapters import EXTRA, CONCEPTS
+import packs
+import runtimes
 
-# 챕터 메타데이터(CHAPTERS)는 tutor_chapters.py 한 곳에서만 정의한다.
-CHAPTERS = dict(EXTRA)
-
-for chapter_id, chapter_meta in CHAPTERS.items():
-    chapter_meta['core_concept'] = CONCEPTS[chapter_id]
+# 레슨 메타데이터는 학습 팩(pack.toml/lesson.toml → knowledge/packs.json)에서만 온다.
+# `chapter` 라는 이름은 HTTP API 와 DB 호환을 위해 남겼고 값은 레슨 id 다.
+CHAPTERS = packs.LESSONS
+MISSING_MARKERS = ('No such container', 'not found', 'Instance is not running', "agent isn't currently running")
 
 # ── lxc / 진단 ────────────────────────────────────────────────────
 
@@ -37,74 +37,72 @@ def lxc_exec(instance, argv, timeout=25):
     return p.returncode, (p.stdout or ""), (p.stderr or "")
 
 
-def node_exec(instance, prefix, node, argv, timeout=25):
-    """clab 노드 안에서 명령 실행 (docker exec 경유)."""
-    if node is None:
-        return lxc_exec(instance, argv, timeout)
-    full = f"{prefix}-{node}"
-    return lxc_exec(instance, ["docker", "exec", full, *argv], timeout)
-
-
-_CLAB_RE = re.compile(r"^clab-(\d{2})-")
+def node_exec(instance, lesson, node, argv, timeout=25):
+    """레슨의 런타임 어댑터로 노드 안에서 명령 실행. node=None 이면 VM 셸."""
+    return runtimes.get(lesson['runtime']).exec(lxc_exec, instance, lesson, node, argv, timeout)
 
 
 def deployed_chapter(instance):
-    """
-    지금 배포된 챕터 번호를 알아낸다. 없으면 None.
-
-    여러 실습이 남아 있으면 가장 최근 생성된 컨테이너의 실습을 선택한다.
-    docker ps 기본 생성 역순에만 의존하지 않고 CreatedAt으로 정렬한다.
-    """
-    rc, out, _ = lxc_exec(instance, ["docker", "ps", "--format", "{{.CreatedAt}}\t{{.Names}}"], 20)
-    if rc != 0:
-        return None
-    rows = [line.split('\t', 1) if '\t' in line else ['', line.strip()] for line in out.splitlines()]
-    for _, n in sorted(rows, key=lambda row: row[0], reverse=True):
-        for ch, meta in CHAPTERS.items():
-            if n.startswith(meta['prefix'] + '-'):
-                return ch
-        m = _CLAB_RE.match(n)
-        if m:
-            return m.group(1)     # 메타데이터 없는 챕터라도 번호는 반환
+    """지금 배포된 레슨 id. 없으면 None. 여러 실습이 남아 있으면 가장 최근 것을 고른다."""
+    for runtime in runtimes.ADAPTERS.values():
+        found = runtime.current(lxc_exec, instance)
+        if found:
+            return found
     return None
+
+
+def deployment_context(instance, chapter):
+    """대화 맥락이 같은 배포에 묶이도록 쓰는, 실행 중인 노드의 안정적인 문자열."""
+    lesson = packs.lesson(chapter)
+    runtime = runtimes.get(lesson['runtime']) if lesson else next(iter(runtimes.ADAPTERS.values()))
+    return runtime.context(lxc_exec, instance, lesson)
+
+
+def _passes(expect, rc, out, err):
+    text = out if expect.get('stream') == 'stdout' else out + err
+    if 'rc' in expect and rc not in expect['rc']:
+        return False
+    if 'contains' in expect:
+        return expect['contains'] in text
+    return bool(re.search(expect['regex'], text, re.I))
 
 
 # ── check ────────────────────────────────────────────────────────
 
 def check(instance, chapter):
-    meta = CHAPTERS.get(chapter)
+    meta = packs.lesson(chapter)
     if not meta:
         return {"ok": False, "known": False, "chapter": chapter,
                 "reason": f"{chapter}장은 아직 자동 채점 도우미가 없어요"}
-    if meta.get("observational") or meta.get('assessment_mode') == 'exploration':
-        # 고칠 고장이 없는 관찰 실습 — 통과/실패 개념이 없다.
+    if not packs.graded(meta):
+        # 고칠 고장이 없는 관찰·탐구 실습 — 통과/실패 개념이 없다.
         return {"ok": True, "known": True, "observational": True,
                 "chapter": chapter, "title": meta["title"], "goal": meta["goal"],
-                "assessment_mode": meta.get('assessment_mode', 'observation'),
+                "assessment_mode": 'observation' if meta['assessment'] == 'observe' else meta['assessment'],
                 "detail": "관찰·탐구 실습입니다. 단일 자동 성공조건을 사용하지 않습니다."}
-    node, argv, needle = meta["success"]
-    rc, out, err = node_exec(instance, meta["prefix"], node, argv, 30)
-    missing = rc not in (0, 1, 28, 124) or any(s in err for s in (
-        'No such container', 'not found', 'Instance is not running', "agent isn't currently running"))
-    passed = needle in (out + err) and not missing
-    if chapter == '12' and not missing:
-        passed = bool(re.search(r'mtu\s*[= ]\s*1400', out + err, re.I))
-        if not passed:
-            route_rc, route_out, route_err = node_exec(instance, meta['prefix'], node,
-                                                      ['ip', 'route', 'get', '10.12.2.10'], 12)
-            out += '\n[PMTU route cache]\n' + route_out + route_err
-            passed = route_rc == 0 and bool(re.search(r'\bmtu\s+1400\b', route_out))
-    conditions = [{'node': node, 'passed': passed, 'rc': rc, 'detail': (out + err)[-600:]}]
-    for extra_node, extra_argv, extra_needle in meta.get('additional_success', []):
-        extra_rc, extra_out, extra_err = node_exec(instance, meta['prefix'], extra_node, extra_argv, 15)
-        extra_ok = extra_rc in (0, 1) and extra_needle in extra_out
-        passed = passed and extra_ok
-        conditions.append({'node': extra_node, 'passed': extra_ok, 'rc': extra_rc,
-                           'detail': (extra_out + extra_err)[-600:]})
+    # 첫 check 가 주 성공조건: 진단 자체가 실패했는지(missing)와 상세 출력은 여기서 나온다.
+    # 나머지 check 는 모두 함께 만족해야 통과한다. fallback 은 주 조건이 안 맞을 때 한 번 더 본다.
+    passed, missing, conditions = True, False, []
+    first_rc, first_text = 0, ''
+    for index, item in enumerate(meta['checks']):
+        rc, out, err = node_exec(instance, meta, item['node'], item['argv'], item['timeout'])
+        if index == 0:
+            missing = rc not in (0, 1, 28, 124) or any(s in err for s in MISSING_MARKERS)
+            ok = _passes(item['expect'], rc, out, err) and not missing
+            if not ok and not missing and item.get('fallback'):
+                fallback = item['fallback']
+                fb_rc, fb_out, fb_err = node_exec(instance, meta, fallback['node'], fallback['argv'], fallback['timeout'])
+                out += '\n[' + fallback.get('label', '보조 확인') + ']\n' + fb_out + fb_err
+                ok = _passes(fallback['expect'], fb_rc, fb_out, fb_err)
+            first_rc, first_text = rc, out + err
+        else:
+            ok = _passes(item['expect'], rc, out, err)
+        passed = passed and ok
+        conditions.append({'node': item['node'], 'passed': ok, 'rc': rc, 'detail': (out + err)[-600:]})
     return {"ok": passed, "known": True, "chapter": chapter,
             "title": meta["title"], "goal": meta["goal"],
             "status": 'diagnostic_error' if missing else 'passed' if passed else 'failed',
-            "rc": rc, "conditions": conditions, "detail": (out + err).strip()[-300:]}
+            "rc": first_rc, "conditions": conditions, "detail": first_text.strip()[-300:]}
 
 
 # ── gather (비파괴 상태 스냅샷) ───────────────────────────────────
@@ -112,8 +110,9 @@ def check(instance, chapter):
 def gather(instance, chapter):
     meta = CHAPTERS[chapter]
     snap = []
-    for label, node, argv in meta["probes"]:
-        rc, out, err = node_exec(instance, meta["prefix"], node, argv, 20)
+    for probe in meta["probes"]:
+        label = probe['label']
+        rc, out, err = node_exec(instance, meta, probe['node'], probe['argv'], 20)
         txt = (out + err).strip()
         # 길이 제한 — LLM 맥락 폭주 방지
         if len(txt) > 600:
@@ -259,16 +258,16 @@ def help_(instance, chapter, attempt):
                            "막히면 WALKTHROUGH.md(`walk " + chapter + "`)의 진단 순서를 따라가 보세요.")}
     res = check(instance, chapter)
     snap = gather(instance, chapter)
-    if meta.get("observational"):
+    if meta['assessment'] == 'observe':
         # 관찰 실습 — 정답을 찾는 게 아니라 무엇을 관찰할지 이끈다.
         prompt = build_observe_prompt(chapter, snap, attempt)
     else:
-        prompt = build_prompt(chapter, snap, res["ok"] and meta.get('assessment_mode') != 'exploration', attempt)
+        prompt = build_prompt(chapter, snap, res["ok"] and packs.graded(meta), attempt)
     try:
         advice = call_llm(prompt)
     except Exception as e:
         return {"ok": False, "message": f"LLM 호출 실패: {e}", "passed": res["ok"]}
-    return {"ok": True, "passed": res["ok"] and not meta.get("observational", False) and meta.get('assessment_mode') != 'exploration', "attempt": attempt,
+    return {"ok": True, "passed": res["ok"] and packs.graded(meta), "attempt": attempt,
             "chapter": chapter, "title": meta["title"], "advice": advice}
 
 
@@ -277,7 +276,7 @@ def help_(instance, chapter, attempt):
 def main():
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
-    # detect: 배포된 챕터 번호만 stdout 으로 (labd 가 씀)
+    # detect: 배포된 레슨 id 만 stdout 으로
     pd = sub.add_parser("detect")
     pd.add_argument("instance")
     for name in ("check", "gather", "help"):

@@ -49,13 +49,13 @@ def main():
             probes = tutor.gather(instance, chapter)
             after = None
             meta = tutor.CHAPTERS[chapter]
-            if not meta.get('observational') and meta.get('assessment_mode') != 'exploration':
+            if tutor.packs.graded(meta):
                 if before['ok']:
                     raise RuntimeError('Unexpected initial success')
                 # FRR may still be bringing up its control sockets after deploy returns.
                 for attempt in range(5):
                     try:
-                        shell('cd "$HOME/network-lab"; bash ' + chapter[:2] + '-*/fix.sh')
+                        shell('cd "$HOME/network-lab"; bash ' + meta['dir'] + '/fix.sh')
                         break
                     except RuntimeError:
                         if not chapter.startswith('17') or attempt == 4:

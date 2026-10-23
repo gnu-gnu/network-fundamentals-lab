@@ -1,0 +1,30 @@
+# 학습 팩 레슨 메타데이터. 진단·채점 명령은 고정 argv 이며 모델이 생성하지 않는다.
+id = "15"
+number = "15"
+title = "15장 ICMP 차단"
+topology = "15-icmp-blocked.clab.yml"
+assessment = "fault"
+concept = "ICMP는 진단뿐 아니라 경로 오류·MTU 통보를 전달한다. 전면 차단과 필수 유형 선별 허용을 구분한다."
+goal = "필수 ICMP를 선별 허용한다. ping 성공만으로 전체 정책이 올바르다고 판정하지 않는다."
+fault = "fw가 ICMP를 전면 차단한다."
+topics = ["MTU", "PMTUD", "단편"]
+hints = [
+  "관찰 결과를 근거로 원인을 좁혀 보세요.",
+  "양 끝의 설정과 왕복 경로를 비교해 보세요.",
+  "정상 조건과 실제 상태의 차이를 확인하세요.",
+]
+
+[[checks]]
+node = "h1"
+argv = ["ping", "-c1", "-W2", "10.15.2.10"]
+expect = { contains = "1 received" }
+
+[[probes]]
+label = "방화벽 규칙"
+node = "fw"
+argv = ["nft", "list", "ruleset"]
+
+[[probes]]
+label = "발신 경로"
+node = "h1"
+argv = ["ip", "route"]

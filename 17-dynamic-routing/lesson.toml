@@ -1,0 +1,69 @@
+# 학습 팩 레슨 메타데이터. 진단·채점 명령은 고정 argv 이며 모델이 생성하지 않는다.
+number = "17"
+assessment = "fault"
+goal = "인접 관계와 경로 광고를 구분하고 h1↔h2 왕복 통신을 회복한다."
+topics = ["왕복", "리턴", "라우팅", "OSPF", "BGP"]
+hints = [
+  "관찰 결과를 근거로 원인을 좁혀 보세요.",
+  "양 끝의 설정과 왕복 경로를 비교해 보세요.",
+  "정상 조건과 실제 상태의 차이를 확인하세요.",
+]
+
+[[checks]]
+node = "h1"
+argv = ["ping", "-c1", "-W2", "10.17.2.10"]
+expect = { contains = "1 received" }
+
+[[lessons]]
+id = "17-ospf"
+title = "17장 OSPF"
+topology = "ospf.clab.yml"
+concept = "OSPF 인접 관계에는 영역 등 설정 일치가 필요하다. 인접 형성·경로 교환·커널 포워딩을 각각 확인한다."
+fault = "r2 area 1과 r1 area 0 불일치로 이웃이 형성되지 않는다."
+
+[[lessons.probes]]
+label = "r1 OSPF"
+node = "r1"
+argv = ["vtysh", "-c", "show ip ospf neighbor"]
+
+[[lessons.probes]]
+label = "r2 OSPF"
+node = "r2"
+argv = ["vtysh", "-c", "show ip ospf neighbor"]
+
+[[lessons.probes]]
+label = "r1 경로"
+node = "r1"
+argv = ["ip", "route"]
+
+[[lessons.probes]]
+label = "r2 경로"
+node = "r2"
+argv = ["ip", "route"]
+
+[[lessons]]
+id = "17-bgp"
+title = "17장 BGP"
+topology = "bgp.clab.yml"
+concept = "BGP 세션 Established는 모든 목적지의 경로 광고를 보장하지 않는다. 광고할 접두사와 수신 경로, 왕복 경로를 따로 확인한다."
+fault = "세션은 Established지만 r1의 10.17.1.0/24 network 광고가 없다."
+
+[[lessons.probes]]
+label = "r1 BGP"
+node = "r1"
+argv = ["vtysh", "-c", "show bgp ipv4 unicast summary"]
+
+[[lessons.probes]]
+label = "r2 BGP"
+node = "r2"
+argv = ["vtysh", "-c", "show bgp ipv4 unicast summary"]
+
+[[lessons.probes]]
+label = "r1 경로"
+node = "r1"
+argv = ["ip", "route"]
+
+[[lessons.probes]]
+label = "r2 경로"
+node = "r2"
+argv = ["ip", "route"]

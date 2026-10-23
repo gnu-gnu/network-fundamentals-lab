@@ -1,0 +1,35 @@
+# 학습 팩 레슨 메타데이터. 진단·채점 명령은 고정 argv 이며 모델이 생성하지 않는다.
+id = "16"
+number = "16"
+title = "16장 헤어핀 NAT"
+topology = "16-nat-hairpin.clab.yml"
+assessment = "fault"
+concept = "헤어핀 DNAT 후 서버가 클라이언트로 직접 응답하면 역변환을 우회할 수 있다. 제한된 SNAT으로 왕복을 NAT 장비에 통과시킨다."
+goal = "서버 응답도 NAT 경로를 지나도록 해 공인 주소 접속을 회복한다."
+fault = "내부 클라이언트가 공인 주소로 DNAT 접속할 때 헤어핀 SNAT가 없다."
+topics = ["NAT", "SNAT", "DNAT", "헤어핀"]
+hints = [
+  "관찰 결과를 근거로 원인을 좁혀 보세요.",
+  "양 끝의 설정과 왕복 경로를 비교해 보세요.",
+  "정상 조건과 실제 상태의 차이를 확인하세요.",
+]
+
+[[checks]]
+node = "cli"
+argv = ["curl", "--noproxy", "*", "-sS", "--max-time", "3", "http://10.16.99.1:8080/"]
+expect = { contains = "pong-hairpin" }
+
+[[probes]]
+label = "NAT 규칙"
+node = "nat"
+argv = ["iptables", "-t", "nat", "-S"]
+
+[[probes]]
+label = "서버 경로"
+node = "srv"
+argv = ["ip", "route"]
+
+[[probes]]
+label = "연결 추적"
+node = "nat"
+argv = ["conntrack", "-L"]

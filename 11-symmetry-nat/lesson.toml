@@ -1,0 +1,30 @@
+# 학습 팩 레슨 메타데이터. 진단·채점 명령은 고정 argv 이며 모델이 생성하지 않는다.
+id = "11"
+number = "11"
+title = "11장 비대칭 경로와 주소 변환"
+topology = "11-symmetry-nat.clab.yml"
+assessment = "fault"
+concept = "TCP는 양 끝 주소·포트의 일관성이 필요하다. 비대칭 경로 자체가 항상 장애는 아니지만 상태 장비나 일방적 주소 재작성을 만나면 실패할 수 있다."
+goal = "TCP 왕복 경로와 출발지 주소의 일관성을 회복한다."
+fault = "srtr의 클라이언트 리턴 경로가 nat를 지나며 SYN-ACK 출발지가 바뀐다."
+topics = ["NAT", "SNAT", "DNAT", "헤어핀"]
+hints = [
+  "관찰 결과를 근거로 원인을 좁혀 보세요.",
+  "양 끝의 설정과 왕복 경로를 비교해 보세요.",
+  "정상 조건과 실제 상태의 차이를 확인하세요.",
+]
+
+[[checks]]
+node = "cli"
+argv = ["bash", "-c", "timeout 4 nc -w 2 10.11.2.10 443"]
+expect = { contains = "pong" }
+
+[[probes]]
+label = "srtr 경로"
+node = "srtr"
+argv = ["ip", "route"]
+
+[[probes]]
+label = "재작성 규칙"
+node = "nat"
+argv = ["nft", "list", "ruleset"]

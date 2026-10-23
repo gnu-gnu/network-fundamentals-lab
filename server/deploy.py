@@ -31,19 +31,19 @@ def _tree(*patterns):
 # 배포 대상. 디렉터리는 glob 으로 모아 모듈·에셋을 추가할 때 목록을 손으로 고치지 않게 한다.
 # 소스 트리에 있어도 배포하지 않는 것: tests/, config/ 예제, 이 두 설치 스크립트.
 FILES = (
-    'labd.py', 'netlab_tutor.py', 'tutor_chapters.py', 'tutor_chat.py', 'knowledge.py', 'guide_view.py',
+    'labd.py', 'netlab_tutor.py', 'packs.py', 'runtimes.py', 'tutor_chat.py', 'knowledge.py', 'guide_view.py',
     'community_chat.py', 'community_auth.py', 'community_ws.py', 'notice_board.py',
     'requirements-community.txt',
     'netlab-user', 'netlab-record', 'netlab-backup',
     'lab-session', 'lab-shell.sh', 'ttyd-lab', 'apply-shell.sh', 'netguard.sh', 'guest-bootstrap.sh',
     'nginx-netlab.conf', 'nginx-open.conf', 'lxd-preseed-zfs.yaml',
     'README.md', 'OPERATIONS.md', 'THIRD_PARTY.md',
-    'knowledge/corpus.json',
+    'knowledge/corpus.json', 'knowledge/packs.json',
 ) + _tree('netlab/*.py', 'templates/*.html', 'assets/*', 'systemd/*')
 
 CLI = ('netlab-user', 'netlab-record', 'netlab-backup')
 # 이름이 바뀌어 더는 배포하지 않는 파일. 설치 디렉터리에 남아 있으면 지운다.
-OBSOLETE = ('netlab-tutor.py',)
+OBSOLETE = ('netlab-tutor.py', 'tutor_chapters.py')
 SHELL = ('netlab-user', 'lab-session', 'lab-shell.sh', 'ttyd-lab', 'apply-shell.sh',
          'netguard.sh', 'guest-bootstrap.sh')
 
@@ -99,6 +99,12 @@ def validate_source():
         original = SOURCE.parent / document['path']
         if original.is_file() and hashlib.sha256(original.read_bytes()).hexdigest() != document['sha256']:
             raise RuntimeError('Knowledge corpus is stale; run python3 server/build_knowledge.py')
+    compiled = json.loads((SOURCE / 'knowledge/packs.json').read_text())
+    pack_ids = {pack['id'] for pack in compiled['packs']}
+    if not compiled['lessons'] or any(lesson['pack'] not in pack_ids for lesson in compiled['lessons']):
+        raise RuntimeError('Compiled packs are inconsistent; run python3 server/build_knowledge.py')
+    if any(document['pack'] not in pack_ids for document in corpus['documents']):
+        raise RuntimeError('Knowledge corpus and packs disagree; run python3 server/build_knowledge.py')
     for name in SHELL:
         run('bash', '-n', str(SOURCE / name))
     for p in (SOURCE / 'config').glob('*.example.json'):

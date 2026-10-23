@@ -1,0 +1,30 @@
+# 학습 팩 레슨 메타데이터. 진단·채점 명령은 고정 argv 이며 모델이 생성하지 않는다.
+id = "09"
+number = "09"
+title = "09장 연결 추적"
+topology = "09-conntrack.clab.yml"
+assessment = "exploration"
+concept = "conntrack은 연결 상태와 타이머를 유지한다. 유휴 타임아웃과 SNAT 포트 자원 고갈은 서로 다른 실패 원인이다."
+goal = "유휴 연결 소멸과 신규 연결 포트 고갈을 구분한다. 단일 ping은 완료 판정이 아니다."
+fault = "established timeout 30초, SNAT 포트 30000-30001 두 개로 제한."
+topics = ["NAT", "SNAT", "DNAT", "헤어핀"]
+hints = [
+  "관찰 결과를 근거로 원인을 좁혀 보세요.",
+  "양 끝의 설정과 왕복 경로를 비교해 보세요.",
+  "정상 조건과 실제 상태의 차이를 확인하세요.",
+]
+
+[[probes]]
+label = "연결 추적 제한"
+node = "nat"
+argv = ["sysctl", "net.netfilter.nf_conntrack_tcp_timeout_established"]
+
+[[probes]]
+label = "NAT 규칙"
+node = "nat"
+argv = ["iptables", "-t", "nat", "-S"]
+
+[[probes]]
+label = "연결 추적"
+node = "nat"
+argv = ["conntrack", "-L"]

@@ -1,0 +1,40 @@
+# 학습 팩 매니페스트.
+# server/build_knowledge.py 가 이 파일과 각 레슨 디렉터리의 lesson.toml 을 읽어
+# server/knowledge/packs.json(메타데이터)과 corpus.json(교재 원문)으로 컴파일한다.
+# 서버(labd·튜터)는 컴파일 결과만 읽고, 팩이 가진 스크립트는 학습자 VM 안에서만 실행된다.
+id = "network"
+title = "네트워크 기초"
+runtime = "containerlab"      # 레슨을 올리고 내리고 노드에서 명령을 실행하는 방식 (server/runtimes.py)
+order = 10
+
+[files]
+guide = "README.md"           # 학습자 교재
+solution = "WALKTHROUGH.md"   # 해설 (힌트 단계에서는 튜터가 인용하지 않음)
+definition = ["*.clab.yml"]   # 레슨 정의 파일 (토폴로지 등)
+definition_label = "참고 토폴로지"
+wiki = "server/knowledge/wiki"
+
+[tutor]
+# 정답을 드러내는 줄. 힌트 단계(help_level < 3)에서 교재·해설·정의 파일 인용에서 제거한다.
+redact = ['ip route (add|replace|del)', 'iptables .* (-A|-D|-F)', 'fix\.sh']
+
+# 질문에 쓰인 말을 검색어로 넓히는 동의어. match 는 정규식.
+[[tutor.synonyms]]
+match = "ARP|MAC|이웃"
+terms = ["ARP", "MAC"]
+
+[[tutor.synonyms]]
+match = "왕복|돌아오|리턴|라우팅"
+terms = ["라우팅", "왕복", "route", "return"]
+
+[[tutor.synonyms]]
+match = 'MTU|큰\s*패킷|단편|터널'
+terms = ["MTU", "PMTUD", "VXLAN"]
+
+[[tutor.synonyms]]
+match = "캐시|DNS|도메인"
+terms = ["DNS", "TTL", "캐시"]
+
+[[tutor.synonyms]]
+match = 'NAT|주소\s*변환|헤어핀'
+terms = ["NAT", "SNAT", "DNAT", "헤어핀"]

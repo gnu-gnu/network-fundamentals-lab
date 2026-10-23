@@ -1,0 +1,40 @@
+# 학습 팩 레슨 메타데이터. 진단·채점 명령은 고정 argv 이며 모델이 생성하지 않는다.
+id = "10"
+number = "10"
+title = "10장 NAT 기초"
+topology = "10-nat-basics.clab.yml"
+assessment = "fault"
+concept = "SNAT은 출발지 주소를 바꾸고 응답 시 연결 상태에 따라 역변환한다. 리턴 경로가 없는 사설 출발지로는 왕복이 성립하지 않을 수 있다."
+goal = "cli 에서 srv 로 통신이 왕복해야 한다."
+fault = "nat 노드에 SNAT(MASQUERADE) 규칙이 없다. 안쪽(cli)에서 나간 패킷의 출발지가 사설 주소 그대로라, 바깥(srv)이 응답을 어디로 보낼지 몰라 왕복이 안 된다."
+topics = ["NAT", "SNAT", "DNAT", "헤어핀"]
+hints = [
+  "cli 가 srv 로 보낸 패킷은 도착하는데 응답이 안 오나요? 출발지 주소가 뭘로 보일지 생각해 보세요.",
+  "srv 입장에서 cli 의 사설 주소로는 응답을 보낼 수 없습니다. 중간의 nat 노드가 주소를 바꿔줘야 합니다.",
+  "nat 노드의 iptables NAT 테이블(POSTROUTING)에 MASQUERADE/SNAT 규칙이 있는지 확인하세요.",
+]
+
+[[checks]]
+node = "cli"
+argv = ["ping", "-c1", "-W2", "10.10.2.10"]
+expect = { contains = "1 received" }
+
+[[probes]]
+label = "cli→srv ping"
+node = "cli"
+argv = ["ping", "-c1", "-W1", "10.10.2.10"]
+
+[[probes]]
+label = "nat POSTROUTING"
+node = "nat"
+argv = ["iptables", "-t", "nat", "-S", "POSTROUTING"]
+
+[[probes]]
+label = "nat conntrack"
+node = "nat"
+argv = ["bash", "-c", "conntrack -L 2>/dev/null | head -5"]
+
+[[probes]]
+label = "cli 주소"
+node = "cli"
+argv = ["ip", "-br", "addr"]

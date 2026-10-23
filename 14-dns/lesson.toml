@@ -1,0 +1,35 @@
+# 학습 팩 레슨 메타데이터. 진단·채점 명령은 고정 argv 이며 모델이 생성하지 않는다.
+id = "14"
+number = "14"
+title = "14장 DNS와 캐시"
+topology = "14-dns.clab.yml"
+assessment = "fault"
+concept = "권한 DNS 변경과 재귀 캐시 갱신은 별개다. TTL 동안 옛 답이 유지되며 DNS 응답 성공과 실제 서비스 성공도 별개다."
+goal = "권한 답과 캐시 답을 구분하고 app.lab 서비스를 회복한다. multi.lab은 별도 과제다."
+fault = "app.lab이 죽은 srv1을 가리킨다. 권한 서버 수정 후에도 캐시에 옛 답이 남을 수 있다."
+topics = ["DNS", "도메인", "캐시"]
+hints = [
+  "관찰 결과를 근거로 원인을 좁혀 보세요.",
+  "양 끝의 설정과 왕복 경로를 비교해 보세요.",
+  "정상 조건과 실제 상태의 차이를 확인하세요.",
+]
+
+[[checks]]
+node = "cli"
+argv = ["curl", "--noproxy", "*", "-sS", "--max-time", "3", "http://app.lab/"]
+expect = { contains = "pong-from-srv2" }
+
+[[probes]]
+label = "캐시 응답"
+node = "cli"
+argv = ["dig", "+time=1", "+tries=1", "@10.14.0.53", "app.lab"]
+
+[[probes]]
+label = "권한 응답"
+node = "cli"
+argv = ["dig", "+time=1", "+tries=1", "@10.14.0.54", "app.lab"]
+
+[[probes]]
+label = "다중 A"
+node = "cli"
+argv = ["dig", "+time=1", "+tries=1", "@10.14.0.53", "multi.lab"]

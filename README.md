@@ -20,6 +20,7 @@ TCP/IP **기본 원리 하나**를 잡고, 그 개념이 깨졌을 때 나는 �
 - **containerlab** + `nicolaka/netshoot`(ip/iproute2, nftables/iptables, socat, nc, tcpdump, curl, mtr)
 - 동적 라우팅 편만 **FRR**(`frrouting/frr`)
 - 각 편 = 폴더 하나: `NN-topic/` 안에 `*.clab.yml` + `README.md`(재현·수정 절차) + `fix.sh` + `WALKTHROUGH.md`
+  + `lesson.toml`(AI 튜터용 레슨 메타데이터: 목표·고장·채점·진단·힌트. 형식은 `pack.toml` 과 [server/README.md](server/README.md) 참고)
 - **`WALKTHROUGH.md` = 모범 답안**: 전체 명령을 실제 실행한 기록 — 단계마다 *의도 → 실측 결과 → 해석*.
   권장 사용법: **먼저 README만 보고 스스로 실습 → 막히거나 끝낸 뒤 WALKTHROUGH와 대조** (처음부터 답안을 펴면 진단 근육이 안 붙는다)
 - **웹 뷰어**: `walkthrough.html` — 전 장 모범답안을 한 페이지에서 단계별로 넘겨보기(←/→), 명령 복사 버튼 포함.

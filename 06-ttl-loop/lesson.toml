@@ -1,0 +1,30 @@
+# 학습 팩 레슨 메타데이터. 진단·채점 명령은 고정 argv 이며 모델이 생성하지 않는다.
+id = "06"
+number = "06"
+title = "06장 TTL과 라우팅 루프"
+topology = "06-ttl-loop.clab.yml"
+assessment = "fault"
+concept = "IP TTL은 라우터마다 감소하며 0이 되면 폐기된다. TTL 소진은 루프를 멈추지만 잘못된 경로를 고치지는 않는다."
+goal = "모르는 목적지를 순환시키지 않고 명시적으로 거절한다. 외부 목적지 ping 성공이 목표가 아니다."
+fault = "r1과 r2가 서로를 기본 경로로 가리킨다."
+topics = ["왕복", "리턴", "라우팅"]
+hints = [
+  "관찰 결과를 근거로 원인을 좁혀 보세요.",
+  "양 끝의 설정과 왕복 경로를 비교해 보세요.",
+  "정상 조건과 실제 상태의 차이를 확인하세요.",
+]
+
+[[checks]]
+node = "r2"
+argv = ["ip", "route", "show", "default"]
+expect = { contains = "unreachable default" }
+
+[[probes]]
+label = "r1 경로"
+node = "r1"
+argv = ["ip", "route"]
+
+[[probes]]
+label = "r2 경로"
+node = "r2"
+argv = ["ip", "route"]

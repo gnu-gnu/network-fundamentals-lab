@@ -32,7 +32,8 @@ LXD VM을 발급하여 브라우저에서 네트워크 실습을 제공하는 �
 | `labd.py`, `netlab/` | `/opt/netlab-admin/`, HTTP 진입점과 설정·상태·VM 수명·nginx·녹화·유지작업 모듈 |
 | `templates/` | `/opt/netlab-admin/templates/`, 사용자 패널·관리자 콘솔 HTML |
 | `netlab-user`, `netlab-record`, `netlab-backup` | `/usr/local/bin/`, 계정·녹화·암호화 백업 CLI |
-| `netlab_tutor.py`, `tutor_chapters.py`, `tutor_chat.py`, `assets/` | `/opt/netlab-admin/`, 도움말·튜터·재생기 |
+| `netlab_tutor.py`, `tutor_chat.py`, `packs.py`, `runtimes.py`, `assets/` | `/opt/netlab-admin/`, 도움말·튜터·재생기 |
+| `knowledge/packs.json`, `knowledge/corpus.json` | `/opt/netlab-admin/knowledge/`, 학습 팩 메타데이터와 교재 원문(빌드 산출물) |
 | `nginx-netlab.conf` | 비밀값 없는 템플릿; 실제 사이트는 `/etc/nginx/sites-available/netlab` |
 | `systemd/` | labd·VM 격리·Docker/LXD 방화벽 서비스 |
 | `lab-shell.sh`, `lab-session`, `ttyd-lab`, `apply-shell.sh` | 골든 VM 내부에 설치하는 게스트 구성 |
@@ -248,14 +249,34 @@ NAT/연결 상태, MTU/터널, DNS/서비스 진단을 다룬다. 학습자의 �
 
 실습 원문이나 Wiki를 수정했다면 배포 전에 저장소 루트에서 다음을 실행한다.
 
+### 학습 팩
+
+학습 콘텐츠는 서버 코드가 아니라 **학습 팩**으로 들어온다. 팩은 매니페스트와 레슨 디렉터리의 묶음이고,
+서버는 `server/build_knowledge.py`가 컴파일한 `knowledge/packs.json`·`corpus.json`만 읽는다.
+팩이 가진 스크립트(토폴로지, `fix.sh` 등)는 학습자 VM 안에서만 실행되며 호스트는 레슨이 선언한
+고정 argv 만 `lxc exec`로 실행한다.
+
+| 파일 | 내용 |
+|---|---|
+| `pack.toml` (저장소 루트 또는 `packs/<id>/`) | 팩 id·제목, 런타임(`containerlab`), 교재·해설·정의 파일 이름 규칙, 튜터용 정답 숨김 패턴과 동의어 |
+| `<레슨 디렉터리>/lesson.toml` | 레슨 id·번호·제목, 핵심 개념, 목표, 심어진 고장, 평가 방식(`fault`/`observe`/`exploration`), 채점 `checks`, 진단 `probes`, 단계식 `hints`, 검색 범위를 넓히는 `topics` |
+| `server/runtimes.py` | 런타임 어댑터. 레슨을 올리고 내린 뒤 "지금 어떤 레슨이 떠 있는가", "노드에서 argv 실행" 을 런타임별로 구현한다 |
+
+`checks` 는 `node`, `argv`, `expect = { contains | regex, stream = "stdout", rc = [...] }` 로 쓰며 모두
+만족해야 통과다. 첫 번째 check 가 주 성공조건이고, 선택적인 `fallback` 은 주 조건이 맞지 않을 때 한 번
+더 확인한다(예: PMTUD 의 경로 캐시). 토폴로지가 여러 개인 디렉터리는 `[[lessons]]` 로 레슨을 나누고
+공통 항목은 파일 맨 위에 둔다. 레슨 id 는 팩 전체에서 유일해야 하며 HTTP API 와 튜터 DB 의
+`chapter` 값으로 쓰인다. 레슨을 추가하거나 고친 뒤에는 아래 빌드를 다시 실행한다.
+
 ```bash
 python3 server/build_knowledge.py
 python3 server/build_knowledge.py --check
 python3 server/deploy.py --source-check
 ```
 
-생성물 `knowledge/corpus.json`에는 원문·문서별 SHA256·전체 버전이 들어간다. 배포는 이 파일을
-함께 복사하고 원문과 생성물이 불일치하면 검사를 실패시킨다. 모델이 표시한 출처는 해당
+생성물 `knowledge/corpus.json`에는 원문·문서별 SHA256·전체 버전이, `knowledge/packs.json`에는
+학습 팩 메타데이터가 들어간다. 배포는 두 파일을 함께 복사하고 원문과 생성물이 불일치하면 검사를
+실패시킨다. 모델이 표시한 출처는 해당
 배포 버전의 원문이다. 검색 인덱스는 이 자료에서 메모리에 구성하므로 별도 운영 DB가 없다.
 `guide_context_chars`는 검색 자료 전체 길이(기본 14000자, 4000~30000), `rag_top_k`는
 기본 장 자료 외 추가 검색 절 수(기본 4, 1~6)다. 한국어는 형태소 분석 없는 키워드 검색과

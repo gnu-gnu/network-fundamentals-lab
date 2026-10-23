@@ -1,0 +1,41 @@
+# 학습 팩 레슨 메타데이터. 진단·채점 명령은 고정 argv 이며 모델이 생성하지 않는다.
+id = "12"
+number = "12"
+title = "12장 MTU와 PMTUD"
+topology = "12-mtu-pmtud.clab.yml"
+assessment = "fault"
+concept = "PMTUD는 DF 패킷의 ICMP fragmentation-needed 피드백으로 경로 MTU를 학습한다. 피드백 차단 시 큰 패킷만 조용히 실패할 수 있다."
+goal = "큰 DF 패킷에 MTU 통보를 받고 경로 MTU를 학습한다. 큰 ping 자체의 성공을 요구하지 않는다."
+fault = "r1의 ICMP frag-needed 차단. 중간 링크 MTU 1400을 발신자가 알 수 없다."
+topics = ["MTU", "PMTUD", "단편"]
+hints = [
+  "관찰 결과를 근거로 원인을 좁혀 보세요.",
+  "양 끝의 설정과 왕복 경로를 비교해 보세요.",
+  "정상 조건과 실제 상태의 차이를 확인하세요.",
+]
+
+[[checks]]
+node = "h1"
+argv = ["ping", "-M", "do", "-c1", "-W2", "-s", "1472", "10.12.2.10"]
+expect = { regex = 'mtu\s*[= ]\s*1400' }
+[checks.fallback]
+label = "PMTU route cache"
+node = "h1"
+argv = ["ip", "route", "get", "10.12.2.10"]
+expect = { regex = '\bmtu\s+1400\b', stream = "stdout", rc = [0] }
+timeout = 12
+
+[[probes]]
+label = "r1 차단 규칙"
+node = "r1"
+argv = ["nft", "list", "ruleset"]
+
+[[probes]]
+label = "h1 경로 MTU"
+node = "h1"
+argv = ["ip", "route", "get", "10.12.2.10"]
+
+[[probes]]
+label = "r1 링크 MTU"
+node = "r1"
+argv = ["ip", "-br", "link"]
