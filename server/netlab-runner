@@ -1,0 +1,13 @@
+#!/usr/bin/env python3
+"""Learning pack runner inside the learner VM. Invoked by the host as a fixed command:
+    lxc exec <vm> -- /opt/netlab/current/runner/netlab-runner      (request JSON on stdin)
+"""
+import os
+import sys
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+# Installed: <root>/runner/netlab-runner. Source tree: server/netlab-runner next to server/runner/.
+sys.path.insert(0, os.path.dirname(HERE) if os.path.basename(HERE) == 'runner' else HERE)
+from runner.main import main  # noqa: E402
+
+sys.exit(main())
