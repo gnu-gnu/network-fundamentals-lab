@@ -1,0 +1,18 @@
+# 학습 팩 표준 v2(format 2) 예제 팩. containerlab 없이 학습자 VM 자체(host)에서 진행하는 shell 런타임을 검증한다.
+# 형식: docs/PACK_IMPLEMENTATION_CONTRACTS.md, server/pack_format/native.py
+format = 2
+id = "example-shell"
+title = "리눅스 셸 예제"
+version = "2026.10.1"
+summary = "학습 팩 v2 형식과 shell 런타임을 보여 주는 최소 예제"
+locale = "ko"
+
+[environment]
+runtime = "shell"
+default_node = "host"
+
+[environment.timeouts]
+setup = 60
+teardown = 60
+solve = 30
+check = 15

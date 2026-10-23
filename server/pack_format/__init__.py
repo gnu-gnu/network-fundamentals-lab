@@ -21,7 +21,8 @@ from pathlib import Path
 
 FORMAT = 1                     # catalog / recipe format
 PROTOCOL = {'min': 1, 'max': 1}  # runner protocol range the recipe works with
-SELECTED = {'network': ('12',)}   # M1 pilot: only these lessons are registered in v2
+# v1-converted lessons registered in v2 (M2 pilot). Format-2 packs register all of their lessons.
+SELECTED = {'network': ('03', '12', '17-ospf', '17-bgp')}
 
 DEFAULT_TIMEOUTS = {'setup': 300, 'teardown': 180, 'check': 30}
 EXCLUDED_NAMES = {'lesson.toml', 'pack.toml', '.DS_Store'}
@@ -235,6 +236,13 @@ def convert_lesson(pack, v1, root):
     nodes = topology_nodes(topology)
     if not nodes:
         raise PackError(f"{v1['id']}: no nodes found in {definition}")
+    nodes = nodes + ['host']          # 'host' = the learner VM itself (v1 probes without a node)
+    hooks = {}
+    fix = Path(root) / lesson_dir / 'fix.sh'
+    if fix.is_file() and not fix.is_symlink():
+        if not os.stat(fix).st_mode & stat.S_IXUSR:
+            raise PackError(f'{lesson_dir}/fix.sh must be executable to serve as the solve hook')
+        hooks['solve'] = 'fix.sh'     # compat mode: the chapter's fix script is its solve hook
     files = pack['files']
     steps = [dict(id='guide', kind='read', required=False, title='실습 안내',
                   text=posixpath.join(lesson_dir, files['guide']))]
@@ -253,7 +261,8 @@ def convert_lesson(pack, v1, root):
     for index, probe in enumerate(v1['probes'], 1):
         if probe['node'] is not None and probe['node'] not in nodes:
             raise PackError(f"{v1['id']}: probe node {probe['node']} is not in the topology")
-        probes.append(dict(id=f'probe-{index}', label=probe['label'], node=probe['node'], argv=list(probe['argv'])))
+        probes.append(dict(id=f'probe-{index}', label=probe['label'], node=probe['node'] or 'host',
+                           argv=list(probe['argv'])))
     solution = posixpath.join(lesson_dir, files['solution'])
     return dict(
         id=f"{pack['id']}/{v1['id']}", pack=pack['id'], lesson=v1['id'], aliases=[v1['id']],
@@ -261,7 +270,7 @@ def convert_lesson(pack, v1, root):
         completion=completion, guide=posixpath.join(lesson_dir, files['guide']),
         solution=solution if (Path(root) / solution).is_file() else None,
         environment=dict(runtime='containerlab', definition=definition, prefix=v1['prefix'],
-                         nodes=nodes, timeouts=dict(DEFAULT_TIMEOUTS)),
+                         nodes=nodes, timeouts=dict(DEFAULT_TIMEOUTS), hooks=hooks),
         steps=steps,
         tutor=dict(concept=v1['concept'], goal=v1['goal'], fault=v1['fault'],
                    topics=list(v1['topics']), probes=probes),
@@ -277,18 +286,19 @@ def recipe_lesson(lesson):
     env = lesson['environment']
     return dict(dir=lesson['dir'], runtime=env['runtime'], definition=env['definition'],
                 prefix=env['prefix'], nodes=list(env['nodes']), timeouts=dict(env['timeouts']),
-                steps=steps,
+                hooks=dict(env.get('hooks') or {}), steps=steps,
                 probes={p['id']: dict(node=p['node'], argv=p['argv']) for p in lesson['tutor']['probes']})
 
 
 def build(root, selection=None):
-    """Compile the v2 catalog (a dict) from the v1 sources under `root`."""
+    """Compile the v2 catalog (a dict): selected v1 lessons (converted) + every format-2 pack."""
     import build_knowledge     # server/ is on sys.path for every caller
+    from . import native
     root = Path(root)
     selection = SELECTED if selection is None else selection
     v1_packs, v1_lessons = build_knowledge.load_all(root)
     by_pack = {pack['id']: pack for pack in v1_packs}
-    catalog = dict(format=FORMAT, packs={}, lessons={}, aliases={})
+    catalog = dict(format=FORMAT, packs={}, lessons={}, aliases={}, documents={})
     for pack_id in sorted(selection):
         if pack_id not in by_pack:
             raise PackError(f'unknown pack in selection: {pack_id}')
@@ -299,35 +309,53 @@ def build(root, selection=None):
         if unknown:
             raise PackError(f'{pack_id}: unknown lessons in selection: {unknown}')
         lessons = [convert_lesson(pack, v1[w], root) for w in wanted]
-        directories = sorted({lesson['dir'] for lesson in lessons})
-        bundle_files, sources, unverified = [], [], []
-        for directory in directories:
-            files = lesson_files(root, directory)
-            bundle_files.extend(files)
-            missing, unknown_refs = references(root, directory, {f['path'] for f in files})
-            if missing:
-                raise PackError('; '.join(missing))
-            unverified.extend(unknown_refs)
-            sources.extend(authoring_files(root, directory))
-        manifest_path = Path(pack['root'] or '.') / 'pack.toml'
-        sources.append(dict(path=manifest_path.as_posix(), sha256=file_sha(root / manifest_path), exec=False))
-        sources.sort(key=lambda item: item['path'])
-        recipe = dict(format=FORMAT, protocol=dict(PROTOCOL), pack=pack_id,
-                      lessons={lesson['id']: recipe_lesson(lesson) for lesson in lessons})
-        bundle_revision = bundle_digest(pack_id, recipe, bundle_files)
-        pack_revision = digest(dict(format=FORMAT, pack=pack, lessons=lessons, sources=sources))
-        catalog['packs'][pack_id] = dict(
-            id=pack_id, title=pack['title'], revision=pack_revision, lessons=[l['id'] for l in lessons],
-            bundle=dict(revision=bundle_revision, recipe=recipe, files=bundle_files),
-            unverified_references=sorted(set(unverified)))
-        for lesson in lessons:
-            catalog['lessons'][lesson['id']] = lesson
-            for alias in lesson['aliases']:
-                if alias in catalog['aliases']:
-                    raise PackError(f'duplicate alias: {alias}')
-                catalog['aliases'][alias] = lesson['id']
+        _add_pack(catalog, root, pack, lessons, Path(pack['root'] or '.') / 'pack.toml')
+    try:
+        native_packs = native.load_all(root, known_lessons=catalog['lessons'])
+    except native.FormatError as exc:
+        raise PackError(str(exc)) from None
+    for pack, lessons in native_packs:
+        if pack['id'] in catalog['packs']:
+            raise PackError(f"duplicate pack id: {pack['id']}")
+        _add_pack(catalog, root, pack, lessons, Path(pack['root']) / 'pack.toml')
+        for lesson in lessons:          # read-step texts of native lessons are not in the v1 corpus
+            for step in lesson['steps']:
+                path = step.get('text')
+                if path:
+                    body = (root / path).read_text()
+                    catalog['documents'][path] = dict(sha256=hashlib.sha256(body.encode()).hexdigest(), text=body)
     catalog['revision'] = digest(sorted((pid, p['revision']) for pid, p in catalog['packs'].items()))
     return catalog
+
+
+def _add_pack(catalog, root, pack, lessons, manifest_path):
+    pack_id = pack['id']
+    directories = sorted({lesson['dir'] for lesson in lessons})
+    bundle_files, sources, unverified = [], [], []
+    for directory in directories:
+        files = lesson_files(root, directory)
+        bundle_files.extend(files)
+        missing, unknown_refs = references(root, directory, {f['path'] for f in files})
+        if missing:
+            raise PackError('; '.join(missing))
+        unverified.extend(unknown_refs)
+        sources.extend(authoring_files(root, directory))
+    sources.append(dict(path=manifest_path.as_posix(), sha256=file_sha(root / manifest_path), exec=False))
+    sources.sort(key=lambda item: item['path'])
+    recipe = dict(format=FORMAT, protocol=dict(PROTOCOL), pack=pack_id,
+                  lessons={lesson['id']: recipe_lesson(lesson) for lesson in lessons})
+    bundle_revision = bundle_digest(pack_id, recipe, bundle_files)
+    pack_revision = digest(dict(format=FORMAT, pack=pack, lessons=lessons, sources=sources))
+    catalog['packs'][pack_id] = dict(
+        id=pack_id, title=pack['title'], revision=pack_revision, lessons=[l['id'] for l in lessons],
+        bundle=dict(revision=bundle_revision, recipe=recipe, files=bundle_files),
+        unverified_references=sorted(set(unverified)))
+    for lesson in lessons:
+        catalog['lessons'][lesson['id']] = lesson
+        for alias in lesson['aliases']:
+            if alias in catalog['aliases']:
+                raise PackError(f'duplicate alias: {alias}')
+            catalog['aliases'][alias] = lesson['id']
 
 
 def bundle_digest(pack_id, recipe, files):

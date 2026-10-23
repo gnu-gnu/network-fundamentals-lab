@@ -66,7 +66,8 @@ class PackFormatTests(unittest.TestCase):
             self.assertEqual(converted['fallback']['label'], original['fallback']['label'])
         recipe = self.catalog['packs']['network']['bundle']['recipe']['lessons']['network/12']
         self.assertEqual(recipe['steps']['verify']['check'], task['check'])
-        self.assertEqual(recipe['nodes'], ['h1', 'r1', 'r2', 'h2'])
+        self.assertEqual(recipe['nodes'], ['h1', 'r1', 'r2', 'h2', 'host'])
+        self.assertEqual(recipe['hooks'], {'solve': 'fix.sh'})          # compat: fix.sh is the solve hook
         self.assertEqual(recipe['prefix'], 'clab-12-mtu-pmtud')
 
     def test_bundle_keeps_lesson_files_and_drops_authoring_and_private_data(self):
@@ -112,8 +113,13 @@ class PackFormatTests(unittest.TestCase):
         changed = pf.build(root, selection)
         self.assertNotEqual(rev(changed, 'network'), rev(base, 'network'))     # content
         self.assertEqual(rev(changed, 'demo'), rev(base, 'demo'))              # other pack untouched
-        os.chmod(fix, 0o644)
+        readme = root / '12-mtu-pmtud/README.md'
+        os.chmod(readme, 0o755)
         self.assertNotEqual(rev(pf.build(root, selection), 'network'), rev(changed, 'network'))   # exec bit
+        os.chmod(readme, 0o644)
+        os.chmod(fix, 0o644)
+        with self.assertRaisesRegex(pf.PackError, 'solve hook'):          # a solve hook must be executable
+            pf.build(root, selection)
         os.chmod(fix, 0o755)
         (root / '04-l3-routing/README.md').write_text('unselected lesson changed\n')
         self.assertEqual(rev(pf.build(root, selection), 'network'), rev(changed, 'network'))
@@ -126,6 +132,56 @@ class PackFormatTests(unittest.TestCase):
         edited = pf.build(root, selection)
         self.assertNotEqual(edited['packs']['network']['revision'], after['packs']['network']['revision'])
         self.assertNotEqual(edited['revision'], after['revision'])
+
+    def test_two_lessons_in_one_directory_share_one_bundle_copy(self):
+        ospf, bgp = self.catalog['lessons']['network/17-ospf'], self.catalog['lessons']['network/17-bgp']
+        self.assertEqual(ospf['dir'], bgp['dir'])
+        self.assertEqual((ospf['environment']['definition'], bgp['environment']['definition']), ('ospf.clab.yml', 'bgp.clab.yml'))
+        paths = [f['path'] for f in self.catalog['packs']['network']['bundle']['files']]
+        self.assertEqual(paths.count('17-dynamic-routing/fix.sh'), 1)
+        three = self.catalog['lessons']['network/03']['steps'][1]['check']['all']
+        self.assertEqual(len(three), 2)                                  # 03: both conditions kept
+
+    def test_native_shell_pack(self):
+        lesson = self.catalog['lessons']['example-shell/permissions']
+        self.assertEqual(lesson['environment']['runtime'], 'shell')
+        self.assertEqual(lesson['environment']['nodes'], ['host'])
+        self.assertEqual(lesson['steps'][1]['check'], {'script': 'checks/fix.sh', 'timeout': 10})
+        self.assertIn(lesson['steps'][0]['text'], self.catalog['documents'])
+        files = [f['path'] for f in self.catalog['packs']['example-shell']['bundle']['files']]
+        self.assertIn('packs/example-shell/permissions/env/setup.sh', files)
+        self.assertNotIn('packs/example-shell/permissions/lesson.toml', files)
+        self.assertNotIn('packs/example-shell/pack.toml', files)
+        self.assertEqual(lesson['aliases'], [])                          # only the network pack has v1 aliases
+
+    def native_copy(self):
+        root = self.copy_repo()
+        shutil.copytree(ROOT / 'packs', root / 'packs', symlinks=True)
+        return root, root / 'packs/example-shell/permissions/lesson.toml'
+
+    def test_native_format_is_strict(self):
+        cases = [
+            (lambda t: t.replace('assessment = "fault"', 'assessment = "fault"\nsurprise = 1'), 'unknown keys'),
+            (lambda t: t.replace('script = "checks/fix.sh"', 'script = "../../../pack.toml"'), 'escapes'),
+            (lambda t: t.replace('script = "checks/fix.sh"', 'script = "checks/missing.sh"'), 'does not exist'),
+            (lambda t: t.replace('node = "host"', 'node = "r9"'), 'not declared'),
+            (lambda t: t.replace('kind = "task"', 'kind = "quiz"'), 'not supported yet'),
+            (lambda t: t.replace('completion = "required-steps"', 'completion = "manual"'), 'manual completion'),
+            (lambda t: t.replace('summary = ', 'prerequisites = ["nowhere"]\nsummary = '), 'unknown prerequisite'),
+        ]
+        for mutate, message in cases:
+            root, lesson = self.native_copy()
+            lesson.write_text(mutate(lesson.read_text()))
+            with self.assertRaisesRegex(pf.PackError, message):
+                pf.build(root)
+        root, lesson = self.native_copy()
+        os.chmod(root / 'packs/example-shell/permissions/env/setup.sh', 0o644)
+        with self.assertRaisesRegex(pf.PackError, 'executable'):
+            pf.build(root)
+        root, lesson = self.native_copy()
+        lesson.write_text(lesson.read_text().replace('summary = ', 'prerequisites = ["permissions"]\nsummary = '))
+        with self.assertRaisesRegex(pf.PackError, 'cycle'):
+            pf.build(root)
 
     def test_reference_to_an_excluded_file_is_an_error(self):
         root = self.copy_repo()

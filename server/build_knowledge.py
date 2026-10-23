@@ -37,9 +37,11 @@ def text_list(value, where, name):
 
 
 def manifests(root=None):
+    """v1 pack manifests. Format-2 packs (v2-native) are compiled by pack_format only."""
     root = root or ROOT
     found = [root / 'pack.toml'] + sorted((root / 'packs').glob('*/pack.toml'))
-    return [p for p in found if p.is_file() and not p.is_symlink()]
+    return [p for p in found if p.is_file() and not p.is_symlink()
+            and tomllib.loads(p.read_text()).get('format') != 2]
 
 
 def load_pack(manifest, root=None):

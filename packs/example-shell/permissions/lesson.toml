@@ -1,0 +1,43 @@
+id = "permissions"
+title = "파일 권한 바로잡기"
+number = "S1"
+summary = "모두에게 열린 비밀 파일을 소유자만 읽고 쓰도록 바꾼다"
+assessment = "fault"
+completion = "required-steps"
+guide = "README.md"
+
+[environment.hooks]
+setup = "env/setup.sh"
+solve = "env/solve.sh"
+teardown = "env/teardown.sh"
+
+[tutor]
+concept = "리눅스 파일 권한은 소유자·그룹·기타 사용자별 읽기(r)·쓰기(w)·실행(x) 비트로 정해진다. 숫자 표기 6은 rw-, 4는 r-- 이다."
+goal = "/home/lab/shell-lab/secret.txt 를 소유자(lab)만 읽고 쓸 수 있게 만든다. 내용은 그대로 둔다."
+fault = "secret.txt 가 644 로 만들어져 같은 VM 의 다른 사용자도 읽을 수 있다."
+topics = ["권한", "chmod", "소유자"]
+
+[[tutor.probes]]
+id = "mode"
+label = "secret.txt 권한"
+node = "host"
+argv = ["stat", "-c", "%a %U:%G %n", "/home/lab/shell-lab/secret.txt"]
+
+[[steps]]
+id = "guide"
+kind = "read"
+title = "실습 안내"
+text = "README.md"
+
+[[steps]]
+id = "fix"
+kind = "task"
+title = "소유자 전용으로 바꾸기"
+hints = [
+  "ls -l ~/shell-lab 로 권한 문자열(-rw-r--r--)을 읽어 보세요. 세 글자씩 소유자·그룹·기타 사용자입니다.",
+  "chmod 의 숫자 표기에서 6 은 읽기+쓰기, 0 은 아무 권한 없음입니다.",
+]
+
+[steps.check]
+script = "checks/fix.sh"
+timeout = 10
