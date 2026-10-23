@@ -100,6 +100,10 @@ def validate_source():
             original = SOURCE.parent / item['path']
             if original.is_file() and hashlib.sha256(original.read_bytes()).hexdigest() != item['sha256']:
                 raise RuntimeError('Learning pack v2 catalog is stale; run python3 server/build_knowledge.py')
+    for path, doc in catalog.get('documents', {}).items():
+        original = SOURCE.parent / path
+        if original.is_file() and hashlib.sha256(original.read_bytes()).hexdigest() != doc['sha256']:
+            raise RuntimeError('Learning pack v2 catalog is stale; run python3 server/build_knowledge.py')
     if any(lesson['pack'] not in catalog['packs'] for lesson in catalog['lessons'].values()):
         raise RuntimeError('Learning pack v2 catalog is inconsistent; run python3 server/build_knowledge.py')
     corpus = json.loads((SOURCE / 'knowledge/corpus.json').read_text())

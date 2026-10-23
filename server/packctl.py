@@ -4,9 +4,10 @@
   packctl.py validate                 compile the v2 catalog in memory and report references
   packctl.py build [--check]          write (or verify) knowledge/v2/catalog.json
   packctl.py bundle --pack P --out F  write the VM bundle tar of pack P from the repository sources
-  packctl.py install --instance VM --bundle F
-                                      DEVELOPMENT ONLY: install runner + bundle into a dedicated,
-                                      unassigned verification VM. Production uses images (M3).
+  packctl.py install --instance VM --bundle F [--bundle G ...]
+                                      DEVELOPMENT ONLY: install runner + bundles (one release with
+                                      every given pack) into a dedicated, unassigned verification VM.
+                                      Production uses images (M3).
 """
 import argparse
 import hashlib
@@ -52,14 +53,21 @@ def runner_sources(code_dir):
     return items
 
 
-def release_archive(code_dir, manifest, recipe, files):
-    """Tar of one release (runner + bundle) plus release.json listing every file's hash and mode."""
+def release_archive(code_dir, *bundles):
+    """Tar of one release (runner + every bundle) plus release.json listing every file's hash and mode.
+
+    `bundles` are (manifest, recipe, files) triples as returned by pack_format.read_bundle. A release
+    replaces the previous one as a whole, so it must carry every pack the VM should have."""
     entries = runner_sources(code_dir)
-    pack = manifest['pack']
-    entries.append((f'packs/{pack}/recipe.json', pack_format.canonical(recipe), 0o644))
-    entries.append((f'packs/{pack}/manifest.json', pack_format.canonical(manifest), 0o644))
-    for path, (data, executable) in sorted(files.items()):
-        entries.append((f'packs/{pack}/files/{path}', data, 0o755 if executable else 0o644))
+    packs = [b[0]['pack'] for b in bundles]
+    if len(set(packs)) != len(packs):
+        raise InstallRefused('같은 팩의 번들을 두 번 줄 수 없습니다.')
+    for manifest, recipe, files in bundles:
+        pack = manifest['pack']
+        entries.append((f'packs/{pack}/recipe.json', pack_format.canonical(recipe), 0o644))
+        entries.append((f'packs/{pack}/manifest.json', pack_format.canonical(manifest), 0o644))
+        for path, (data, executable) in sorted(files.items()):
+            entries.append((f'packs/{pack}/files/{path}', data, 0o755 if executable else 0o644))
     listing = {name: dict(sha256=hashlib.sha256(data).hexdigest(), mode=mode) for name, data, mode in entries}
     release_id = hashlib.sha256(pack_format.canonical(listing)).hexdigest()[:16]
     buffer = io.BytesIO()
@@ -173,17 +181,23 @@ def runner_idle(instance, run=lxc):
         raise InstallRefused(f"실행 중인 실습이나 확인 작업이 있습니다(state={status.get('state')}). 설치하지 않았습니다.")
 
 
-def install(instance, bundle_path, run=lxc, code_dir=SERVER, catalog_path=CATALOG,
+def install(instance, bundle_paths, run=lxc, code_dir=SERVER, catalog_path=CATALOG,
             config_path=CONFIG_PATH, state_path=STATE_PATH):
+    if isinstance(bundle_paths, (str, os.PathLike)):
+        bundle_paths = [bundle_paths]
     check_target(instance, run, config_path, state_path)
     catalog = json.loads(Path(catalog_path).read_text())
-    manifest, recipe, files = pack_format.read_bundle(bundle_path)
-    pack = manifest['pack']
-    if pack not in catalog['packs']:
-        raise InstallRefused(f'서버 카탈로그에 없는 팩입니다: {pack}')
-    pack_format.read_bundle(bundle_path, catalog['packs'][pack]['bundle']['revision'])
+    bundles = []
+    for bundle_path in bundle_paths:
+        manifest, recipe, files = pack_format.read_bundle(bundle_path)
+        pack = manifest['pack']
+        if pack not in catalog['packs']:
+            raise InstallRefused(f'서버 카탈로그에 없는 팩입니다: {pack}')
+        pack_format.read_bundle(bundle_path, catalog['packs'][pack]['bundle']['revision'])
+        bundles.append((manifest, recipe, files))
     runner_idle(instance, run)
-    release_id, data = release_archive(code_dir, manifest, recipe, files)
+    release_id, data = release_archive(code_dir, *bundles)
+    manifest = bundles[0][0]
     with tempfile.NamedTemporaryFile(suffix='.tar') as tmp:
         tmp.write(data)
         tmp.flush()
@@ -202,7 +216,8 @@ def install(instance, bundle_path, run=lxc, code_dir=SERVER, catalog_path=CATALO
     if rc == 0 and not out.strip():
         import uuid
         run('config', 'set', instance, f'{INCARNATION_KEY}={uuid.uuid4()}')
-    return dict(ok=True, instance=instance, release=release_id, pack=pack, bundle=manifest['bundle'])
+    return dict(ok=True, instance=instance, release=release_id,
+                packs={b[0]['pack']: b[0]['bundle'] for b in bundles})
 
 
 def main(argv=None):
@@ -216,7 +231,7 @@ def main(argv=None):
     bundle.add_argument('--out', required=True)
     inst = sub.add_parser('install')
     inst.add_argument('--instance', required=True)
-    inst.add_argument('--bundle', required=True)
+    inst.add_argument('--bundle', required=True, action='append')
     args = parser.parse_args(argv)
 
     if args.command == 'validate':

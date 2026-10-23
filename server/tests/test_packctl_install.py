@@ -107,6 +107,17 @@ class InstallTargetTests(unittest.TestCase):
         self.assertTrue(result['ok'])
         self.assertEqual([c[0] for c in lxc.destructive()], ['file', 'exec'])
 
+    def test_one_release_carries_every_given_pack(self):
+        catalog = json.loads(self.catalog.read_text())
+        shell = Path(self.tmp.name) / 'shell.tar'
+        pack_format.write_bundle(SERVER.parent, catalog, 'example-shell', shell)
+        result = packctl.install(VM, [self.bundle, shell], run=FakeLxc(), catalog_path=self.catalog,
+                                 config_path=self.config, state_path=self.state)
+        self.assertEqual(set(result['packs']), {'network', 'example-shell'})
+        with self.assertRaises(packctl.InstallRefused):
+            packctl.install(VM, [self.bundle, self.bundle], run=FakeLxc(), catalog_path=self.catalog,
+                            config_path=self.config, state_path=self.state)
+
 
 class GuestSwitchTests(unittest.TestCase):
     """GUEST_INSTALL verifies everything before switching `current`; failures keep the old release."""
@@ -121,7 +132,7 @@ class GuestSwitchTests(unittest.TestCase):
         self.parts = pack_format.read_bundle(bundle)
 
     def release(self, tamper=None):
-        release_id, data = packctl.release_archive(SERVER, *self.parts)
+        release_id, data = packctl.release_archive(SERVER, self.parts)
         if tamper:
             data = tamper(data)
         path = Path(self.tmp.name) / f'{release_id}.tar'

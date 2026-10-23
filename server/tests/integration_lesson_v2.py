@@ -16,6 +16,9 @@ nginx would, so authentication, routing, jobs and the progress DB are the real o
   --with-cli     the shell `lab` command still works next to the runner (shared lock), and the web
                  notices an environment switched from the terminal instead of judging the wrong lesson
   --with-reboot  after a VM restart the runner asks for explicit recovery; reset recovers
+  --m2           M2: solve (12, 03, 17), terminal-started lessons adopted by the web (lab 12, lab 17 ospf/bgp),
+                 lab check is reference only, lab reset, the shell-runtime example pack, the legacy `lab 04`
+                 path next to the runner, and the tutor's probe path through the runner
 """
 import argparse
 import http.client
@@ -32,6 +35,12 @@ RUNNER_STATE = '/var/lib/netlab/runner/state.json'
 def lxc(*args, timeout=120):
     p = subprocess.run(['lxc', *args], capture_output=True, text=True, timeout=timeout)
     return p.returncode, p.stdout, p.stderr
+
+
+def lab_cli(instance, command, timeout=600):
+    """Run a `lab` shell command as the learner, exactly like the terminal."""
+    return lxc('exec', instance, '--', 'runuser', '-u', 'lab', '--', 'bash', '-c',
+               '. /etc/lab-shell.sh; ' + command, timeout=timeout)
 
 
 class Labd:
@@ -78,11 +87,21 @@ class Labd:
             time.sleep(1)
         raise AssertionError('job did not finish: ' + job_id)
 
-    def act(self, action, **kw):
-        return self.wait(self.submit(f'lesson/{LESSON}/{action}', **kw))
+    def act(self, action, lesson=LESSON, **kw):
+        return self.wait(self.submit(f'lesson/{lesson}/{action}', **kw))
 
-    def check(self, **kw):
-        return self.wait(self.submit(f'lesson/{LESSON}/step/verify/check', **kw))
+    def check(self, lesson=LESSON, step='verify', **kw):
+        return self.wait(self.submit(f'lesson/{lesson}/step/{step}/check', **kw))
+
+    def check_until(self, lesson, want, step='verify', limit=150):
+        """Re-check (routing protocols converge in tens of seconds) until `want` or the limit."""
+        deadline = time.time() + limit
+        while True:
+            job = self.check(lesson, step)
+            status = ((job['result'].get('runner') or {}).get('result') or {}).get('status')
+            if status == want or time.time() > deadline:
+                return job, status
+            time.sleep(5)
 
 
 def step(name):
@@ -94,6 +113,7 @@ def main():
     parser.add_argument('--account', required=True)
     parser.add_argument('--with-cli', action='store_true')
     parser.add_argument('--with-reboot', action='store_true')
+    parser.add_argument('--m2', action='store_true')
     args = parser.parse_args()
     config = json.load(open('/etc/netlab/config.json'))
     if config.get('environment') != 'development':
@@ -219,14 +239,119 @@ def main():
         assert job['state'] == 'done', job
         assert labd.state()['environment']['state'] == 'running'
 
+    if args.m2:
+        run_m2(labd, instance)
+
     step('M1-10 stop')
-    job = labd.act('stop')
-    assert job['state'] == 'done', job
+    if labd.state()['environment']['state'] != 'idle':
+        job = labd.act('stop')
+        assert job['state'] == 'done', job
     view = labd.state()
     assert view['environment']['state'] == 'idle' and view['attempt'] is None, view
     rc, left, _ = lxc('exec', instance, '--', 'docker', 'ps', '-q', '--filter', 'name=clab-12-mtu-pmtud')
     assert not left.strip()
     print(f'OK — M1 실기 검사 통과 ({time.time() - started:.0f}s, {instance})')
+
+
+def status_of(job):
+    return ((job['result'].get('runner') or {}).get('result') or {}).get('status')
+
+
+def events(account, kind):
+    import sqlite3
+    db = sqlite3.connect('/var/lib/netlab/learning/progress.sqlite3')
+    return db.execute('SELECT count(*) FROM step_events e JOIN attempts a USING(attempt_id) '
+                      'WHERE a.account=? AND e.kind=?', (account, kind)).fetchone()[0]
+
+
+def run_m2(labd, instance):
+    step('M2 12장 해설 적용 → 재확인 통과, 도움 사용 기록')
+    if labd.state()['environment']['state'] != 'idle':
+        labd.act('stop')
+    labd.act('start')
+    assert status_of(labd.check()) == 'fail'
+    job = labd.act('solve')
+    assert job['state'] == 'done', job
+    view = labd.state()['attempt']
+    assert view['assisted'] and view['steps']['verify'] == 'untested', view
+    job = labd.check()
+    assert status_of(job) == 'pass' and job['result']['progress']['completed_now'], job
+    labd.act('stop')
+
+    step('M2 터미널 lab 12 → 웹이 다시 배포하지 않고 회차로 이어 받음')
+    rc, out, err = lab_cli(instance, 'lab 12')
+    assert rc == 0 and '준비됐습니다' in out, (out[-400:], err[-400:])
+    view = labd.state()
+    assert view['environment']['lesson'] == LESSON and view['attempt']['origin'] == 'adopted_cli', view
+    generation = view['environment']['observed']['generation']
+    assert status_of(labd.check()) == 'fail'
+    before = events(labd.account, 'check')
+    rc, out, _ = lab_cli(instance, 'lab check')
+    assert '참고용' in out and events(labd.account, 'check') == before, out
+    rc, out, _ = lab_cli(instance, 'lab 12')
+    assert '이미 실행 중' in out and labd.token()['generation'] == generation, out
+    rc, out, _ = lab_cli(instance, 'lab reset')
+    assert rc == 0, out
+    view = labd.state()
+    assert view['environment']['observed']['generation'] == generation + 1, view
+    assert view['attempt']['generation'] == generation + 1 and view['attempt']['steps']['verify'] == 'untested', view
+
+    for variant, lesson in (('ospf', 'network/17-ospf'), ('bgp', 'network/17-bgp')):
+        step(f'M2 터미널 lab 17 {variant} → 이어 받기, 해설 적용 후 수렴 대기')
+        rc, out, err = lab_cli(instance, f'lab 17 {variant}')
+        assert rc == 0, (out[-400:], err[-400:])
+        view = labd.state()
+        assert view['environment']['lesson'] == lesson and view['attempt']['origin'] == 'adopted_cli', view
+        assert status_of(labd.check(lesson)) == 'fail'
+        assert labd.act('solve', lesson=lesson)['state'] == 'done'
+        job, status = labd.check_until(lesson, 'pass')
+        assert status == 'pass', job
+        print(f'    {lesson}: 해설 적용 후 통과')
+
+    step('M2 03장 복합 검증 두 조건')
+    labd.act('start', lesson='network/03')
+    job = labd.check('network/03')
+    items = job['result']['runner']['result']['items']
+    assert status_of(job) == 'fail' and len(items) == 2, job
+    labd.act('solve', lesson='network/03')
+    job, status = labd.check_until('network/03', 'pass', limit=60)
+    assert status == 'pass' and [i['result'] for i in job['result']['runner']['result']['items']] == ['pass', 'pass'], job
+
+    step('M2 shell 런타임 예제 팩: 훅·스크립트 확인·수동 수정')
+    shell = 'example-shell/permissions'
+    job = labd.act('start', lesson=shell)
+    assert job['state'] == 'done', job
+    job = labd.check(shell, 'fix')
+    assert status_of(job) == 'fail' and '644' in (job['result']['runner']['result']['items'][0].get('message') or ''), job
+    rc, out, err = lxc('exec', instance, '--', 'runuser', '-u', 'lab', '--', 'chmod', '600',
+                       '/home/lab/shell-lab/secret.txt')
+    assert rc == 0, err
+    job = labd.check(shell, 'fix')
+    assert status_of(job) == 'pass' and job['result']['progress']['completed_now'], job
+
+    step('M2 튜터: 현재 레슨을 runner 로 알고 등록된 probe 만 실행')
+    probe = subprocess.run(['python3', '-c', '''
+import sys, json
+sys.path.insert(0, "/opt/netlab-admin")
+from netlab import store, lessons
+store.load_config(); store.load_state()
+ctx = lessons.tutor_context(sys.argv[1])
+got = lessons.tutor_probe(sys.argv[1], ctx, "mode")
+print(json.dumps(dict(lesson=ctx["lesson_id"], step=ctx["step"], output=got.get("output"), error=got.get("error"))))
+''', labd.account], capture_output=True, text=True, timeout=120)
+    info = json.loads(probe.stdout.strip().splitlines()[-1])
+    assert info['lesson'] == shell and '600' in (info['output'] or ''), (info, probe.stderr[-400:])
+
+    step('M2 등록되지 않은 lab 04 는 기존 방식: 실행기 실습을 먼저 내리고 배포')
+    rc, out, err = lab_cli(instance, 'lab 04')
+    assert rc == 0, (out[-400:], err[-400:])
+    rc, gone, _ = lxc('exec', instance, '--', 'test', '-e', '/home/lab/shell-lab')
+    assert rc != 0, 'shell lesson teardown must have run'
+    view = labd.state()
+    assert view['environment']['state'] == 'idle' and view['attempt'] is None, view
+    assert view['environment']['runtime']['matches'] is False, view
+    rc, out, err = lab_cli(instance, 'unlab')
+    assert rc == 0, (out[-300:], err[-300:])
 
 
 if __name__ == '__main__':
