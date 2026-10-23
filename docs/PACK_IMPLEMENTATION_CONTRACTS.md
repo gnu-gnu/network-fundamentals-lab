@@ -237,6 +237,20 @@ M1의 개발 설치는 clean 스냅샷을 만든 뒤에 runner를 넣습니다. 
 | format 2 범위 | read·task 단계, argv·script·all 검증, 훅 5종, probe를 지원합니다. quiz·reflect·탭은 해당 단계 전까지 오류로 거부합니다 |
 | 개발 설치 | 한 릴리스에 VM이 가질 모든 팩을 담습니다(`--bundle`을 여러 번) |
 
+## M3 구현에서 확정한 세부
+
+| 항목 | 정한 값 |
+| --- | --- |
+| 이미지 빌드 | `packctl image`가 설정 이미지(또는 지정한 기반)에서 빌드 VM을 만들고, labd와 같은 실습 계정 권한 정리와 `lab-shell.sh`를 반영한 뒤 runner와 **카탈로그의 모든 팩** 번들을 한 릴리스로 설치합니다. 해설 훅이 있는 모든 레슨을 start → solve → 모든 task check pass → stop으로 확인해야 게시합니다 |
+| 게시 규칙 | 항상 새 별칭으로 게시하며 기존 별칭·이미지를 바꾸거나 지우지 않습니다. 실패하면 빌드 VM을 진단용으로 남깁니다. 게시 전 작업 사본·runner 상태·machine-id·SSH 호스트 키·세션 기록을 지웁니다 |
+| 이미지 기록 | `/var/lib/netlab/images/<별칭>.json`에 지문, 기반 이미지와 지문, 소스 기준, 릴리스 ID, runner 버전(소스 해시)·protocol, catalog revision, 팩별 bundle revision, smoke 결과를 남깁니다. 이미지 속성에도 릴리스·protocol·번들 맵을 적습니다 |
+| 연결 | `packctl activate`는 기록이 있고, 별칭이 기록한 지문을 가리키며, 번들 맵이 서버 카탈로그와 같은 이미지만 설정 `image`로 연결합니다. 실행기 없는 이전 이미지로 되돌릴 때만 `--legacy`를 씁니다 |
+| 풀 이행 | 배정 시 설정 이미지와 기반 지문(`volatile.base_image`)이 다른 예비는 건너뛰고, 유지 작업이 준비 완료·미예약 예비만 지운 뒤 새로 채웁니다. 사용자에게 배정된 VM은 지우지 않습니다. 어느 쪽 지문이든 모르면 아무것도 지우지 않습니다 |
+| runner 없는 VM | 레슨 API는 410, `path: legacy`와 환경 교체 안내를 돌려줍니다. 상태 API는 runner VM에서 `path: runner`, capability, 팩별 번들 일치 여부를 보입니다 |
+| 긴급 중지 | 설정 `lessons_paused`가 참이면 새 레슨 작업(start·reset·stop·solve·check)을 503 `paused`로 거절합니다. 조회·힌트·읽음 표시·터미널·튜터는 유지합니다. 계정별 플래그는 두지 않습니다 |
+| 백업 | SQLite DB는 backup API 사본(rollback journal 모드)으로 담고 `-wal`·`-shm`·`-journal`은 담지 않습니다. 백업·검사·복원 때 integrity_check, foreign_key_check, 열린 회차 중복, 완료와 회차의 계정·레슨 일치, 이벤트 작업의 계정 일치, 요약과 완료 수 일치를 확인합니다 |
+| 복원 뒤 | labd 시작 시 queued·running 작업은 interrupted로 바꾸고 다시 실행하지 않습니다. 회차는 다음 상태 동기화에서 VM의 incarnation·generation과 맞춥니다 |
+
 ## 수용 기준 변경
 
 계약과 테스트는 함께 변경합니다. 최소 수용 대상은 [구현 절차의 M1 수용표](PACK_IMPLEMENTATION_PROCEDURE.md#m1-수용-테스트)입니다. Schema의 정상 사례뿐 아니라 토큰 없는 구형 stop, 추가 argv, 음수 세대, 대상 누락, protocol 위반이 거부되는지 확인합니다. 문서 커밋은 구현 완료나 운영 배포 승인을 의미하지 않습니다.

@@ -128,11 +128,31 @@ class ImageBuildTests(unittest.TestCase):
 
     def test_failed_smoke_keeps_builder_and_publishes_nothing(self):
         host = FakeHost(self.catalog, check='fail')
-        with self.assertRaisesRegex(packctl.ImageError, '해설 적용 뒤에도 fail'):
-            self.build(host)
+        clock = iter(range(0, 10 ** 6, 100))
+        with patch.object(packctl.time, 'time', side_effect=lambda: next(clock)), patch.object(packctl.time, 'sleep'):
+            with self.assertRaisesRegex(packctl.ImageError, '해설 적용 뒤에도 fail'):
+                self.build(host)
         self.assertEqual(host.did('publish'), [])
         self.assertEqual(host.did('delete'), [])
         self.assertFalse((self.records / 'netlab-v2-test.json').exists())
+
+    def test_smoke_waits_for_convergence(self):
+        host = FakeHost(self.catalog, check='fail')
+        checks = []
+
+        def converge(request):
+            if request['action'] == 'check':
+                checks.append(1)
+                if len(checks) % 3 == 0:
+                    host.check = 'pass'
+            elif request['action'] == 'start':
+                host.check = 'fail'
+            return FakeHost.runner(host, request)
+        host.runner = converge
+        with patch.object(packctl.time, 'sleep') as sleep:
+            record = self.build(host)
+        self.assertTrue(all(set(s['steps'].values()) == {'pass'} for s in record['smoke']))
+        self.assertTrue(sleep.called)
 
     def test_existing_alias_and_incomplete_bundles_are_refused_before_any_vm(self):
         with self.assertRaisesRegex(packctl.ImageError, '이미 있는'):

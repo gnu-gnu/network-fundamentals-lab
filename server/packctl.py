@@ -304,9 +304,9 @@ def runner_call(run, instance, request, timeout=900):
         raise ImageError(f"실행기 응답을 읽지 못했습니다({request.get('action')}): {(err or out).strip()[-300:]}") from None
 
 
-def smoke(run, instance, bundles, lessons=None, say=print):
+def smoke(run, instance, bundles, lessons=None, say=print, converge=180):
     """Run every solvable lesson the way a learner's web panel does: start → solve → every task check
-    must pass → stop. Returns [{lesson, steps}]. Any other outcome stops the build."""
+    must pass within `converge` seconds → stop. Returns [{lesson, steps}]. Any other outcome stops the build."""
     done = []
     for manifest, recipe, _ in bundles:
         for lesson_id, ldef in sorted(recipe['lessons'].items()):
@@ -328,7 +328,12 @@ def smoke(run, instance, bundles, lessons=None, say=print):
             call('solve', lesson=lesson_id, expected_bundle=bundle)
             steps = {}
             for step in ldef.get('steps', {}):
-                result = call('check', lesson=lesson_id, expected_bundle=bundle, step=step)['result']
+                deadline = time.time() + converge
+                while True:      # routing protocols converge tens of seconds after the fix
+                    result = call('check', lesson=lesson_id, expected_bundle=bundle, step=step)['result']
+                    if result['status'] == 'pass' or time.time() > deadline:
+                        break
+                    time.sleep(5)
                 steps[step] = result['status']
                 if result['status'] != 'pass':
                     raise ImageError(f'{lesson_id} {step}: 해설 적용 뒤에도 {result["status"]} '
