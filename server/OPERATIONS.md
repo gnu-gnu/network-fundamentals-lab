@@ -86,6 +86,9 @@ nginx 는 `auth_request` 로 labd 의 `/_access`(일반) · `/_access_admin`(관
 ### 사용자 테이블
 
 `/var/lib/netlab/users.json` — 이메일, 역할, 생성·최종 로그인 시각, 차단 여부.
+`/var/lib/netlab/visits.json` — 계정별 최근 접속 시각. labd 가 본 마지막 사용자 요청(패널·상태 폴링·API)으로,
+Access·LAN·guest 모두 기록되며 계정당 60초에 한 번만 저장한다. 관리자 콘솔의 "최근 접속" 은 이 값과
+`users.json` 의 최종 로그인 중 늦은 쪽이다.
 
 ```bash
 sudo netlab-user list                  # 이메일·역할까지 표시

@@ -37,6 +37,7 @@
  #out{font-family:var(--mono);font-size:12.5px;background:var(--panel2);border-radius:8px;
   padding:10px 13px;color:var(--ink2);margin-top:16px;white-space:pre-wrap}
  .empty{padding:20px;color:var(--ink3);font-size:14px}
+ .dim{color:var(--ink3)}
  :root{--warn:#b45309;--warnbg:#fdf1e0}
  @media(prefers-color-scheme:dark){:root:not([data-theme=light]){--warn:#fbbf24;--warnbg:#2e2312}}
  [data-theme=dark]{--warn:#fbbf24;--warnbg:#2e2312}
@@ -101,8 +102,14 @@
   <h2>발급된 환경</h2>
   <div class=note id=adminpresence role=status aria-live=polite>접속자 연결 중…</div>
   <div class=tw><table>
-    <thead><tr><th>계정</th><th>상태</th><th>인스턴스</th><th>주소</th><th>발급</th><th>정지 경과</th><th>조치</th></tr></thead>
-    <tbody id=rows><tr><td colspan=7 class=empty>불러오는 중…</td></tr></tbody>
+    <thead><tr><th>계정</th><th>상태</th><th>인스턴스</th><th>주소</th><th>발급</th><th>최근 접속</th><th>정지 경과</th><th>조치</th></tr></thead>
+    <tbody id=rows><tr><td colspan=8 class=empty>불러오는 중…</td></tr></tbody>
+  </table></div>
+
+  <h2>계정별 최근 접속</h2>
+  <div class=tw><table>
+    <thead><tr><th>계정</th><th>최근 접속</th><th>환경</th></tr></thead>
+    <tbody id=visits><tr><td colspan=3 class=empty>불러오는 중…</td></tr></tbody>
   </table></div>
 
   <h2>예비 환경 (웜 풀)</h2>
@@ -129,6 +136,12 @@ const $=i=>document.getElementById(i), out=$('out');
 function ago(iso){ if(!iso) return '—';
   const d=(Date.now()-new Date(iso).getTime())/86400000;
   return d<1 ? Math.round(d*24)+'시간' : d.toFixed(1)+'일'; }
+function when(iso){ if(!iso) return '—';
+  const t=new Date(iso); if(isNaN(t)) return '—';
+  const m=(Date.now()-t.getTime())/60000;
+  const rel=m<1?'방금':m<60?Math.round(m)+'분 전':m<1440?Math.round(m/60)+'시간 전':Math.round(m/1440)+'일 전';
+  const p=n=>String(n).padStart(2,'0');
+  return `${t.getFullYear()}-${p(t.getMonth()+1)}-${p(t.getDate())} ${p(t.getHours())}:${p(t.getMinutes())} <span class=dim>(${rel})</span>`; }
 async function load(){
   const j=await (await fetch('list',{cache:'no-store'})).json();
   const rows=j.users.map(u=>`<tr>
@@ -136,10 +149,16 @@ async function load(){
     <td><span class="pill ${u.state==='running'?'on':'off'}">${u.state}</span></td>
     <td class=m>${u.instance||'—'}</td><td class=m>${u.ip||'—'}</td>
     <td class=m>${(u.created||'').slice(0,10)||'—'}</td>
+    <td class=m>${when(u.last_visit)}</td>
     <td class=m>${u.state==='stopped'?ago(u.stopped_at):'—'}</td>
     <td>${u.state==='running'?`<button onclick="act('stop','${u.user}')">정지</button>`:''}
         <button class=danger onclick="act('destroy','${u.user}')">회수</button></td></tr>`).join('');
-  $('rows').innerHTML = rows || '<tr><td colspan=7 class=empty>발급된 환경이 없습니다.</td></tr>';
+  $('rows').innerHTML = rows || '<tr><td colspan=8 class=empty>발급된 환경이 없습니다.</td></tr>';
+  const env=new Map(j.users.map(u=>[u.user,u.state]));
+  const accounts=(j.accounts||[]).slice().sort((a,b)=>((j.visits||{})[b]||'').localeCompare((j.visits||{})[a]||'')||a.localeCompare(b));
+  $('visits').innerHTML = accounts.map(a=>`<tr><td class=m><b>${a}</b></td><td class=m>${when((j.visits||{})[a])}</td>
+    <td>${env.has(a)?`<span class="pill ${env.get(a)==='running'?'on':'off'}">${env.get(a)}</span>`:'<span class=dim>없음</span>'}</td></tr>`).join('')
+    || '<tr><td colspan=3 class=empty>계정이 없습니다.</td></tr>';
   $('pool').innerHTML = j.pool.map(p=>`<tr><td class=m>${p.instance}</td><td class=m>${p.ip}</td>
     <td><span class="pill ${p.ready?'on':'off'}">${p.ready?'준비됨':'준비 중'}</span></td></tr>`).join('')
     || '<tr><td colspan=3 class=empty>예비 환경이 없습니다.</td></tr>';

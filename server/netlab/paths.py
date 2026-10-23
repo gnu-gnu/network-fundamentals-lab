@@ -19,6 +19,7 @@ ADMIN_HTPASSWD = os.path.join(ETC, "admin.htpasswd")
 VAR = "/var/lib/netlab"
 STATE_PATH = os.path.join(VAR, "state.json")
 USERS_PATH = os.path.join(VAR, "users.json")
+VISITS_PATH = os.path.join(VAR, "visits.json")   # 계정별 최근 접속 시각 (labd 가 본 마지막 요청)
 RECORD_ROOT = os.path.join(VAR, "recordings")
 COMMUNITY_DB = os.path.join(VAR, "community", "chat.sqlite3")
 NOTICE_DB = os.path.join(VAR, "notice", "notice.sqlite3")

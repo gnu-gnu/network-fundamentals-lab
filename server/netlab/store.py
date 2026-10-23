@@ -8,7 +8,7 @@ import os
 import threading
 
 from . import paths
-from .util import NAME_RE, log, write_atomic
+from .util import NAME_RE, log, write_atomic, now, iso, parse_iso
 
 DEFAULTS = {
     "image": "netlab",
@@ -104,6 +104,45 @@ def load_state():
 
 def save_state():
     write_atomic(paths.STATE_PATH, json.dumps(STATE, indent=2, ensure_ascii=False), 0o600)
+
+
+# ─────────────────────────── 최근 접속 ───────────────────────────
+# 계정별로 labd 가 마지막으로 본 사용자 요청 시각. 인증 방식(Access·LAN·guest)과 무관하게
+# 기록되며, 패널 폴링마다 쓰지 않도록 계정당 VISIT_WRITE_INTERVAL 초에 한 번만 저장한다.
+VISITS = {}
+VISIT_WRITE_INTERVAL = 60
+
+
+def load_visits():
+    try:
+        with open(paths.VISITS_PATH) as f:
+            data = json.load(f)
+        _replace(VISITS, {k: v for k, v in data.items() if isinstance(v, str)})
+    except FileNotFoundError:
+        VISITS.clear()
+    except Exception as e:
+        log(f"최근 접속 기록 읽기 실패, 초기화: {e}")
+        VISITS.clear()
+
+
+def touch_visit(account):
+    with LOCK:
+        previous = VISITS.get(account)
+        current = now()
+        VISITS[account] = iso(current)
+        earlier = parse_iso(previous) if previous else None
+        if earlier and (current - earlier).total_seconds() < VISIT_WRITE_INTERVAL:
+            return
+        try:
+            write_atomic(paths.VISITS_PATH, json.dumps(VISITS, indent=2, ensure_ascii=False), 0o600)
+        except OSError as e:
+            log(f"최근 접속 기록 저장 실패: {e}")
+
+
+def last_visit(account):
+    """labd 가 본 마지막 요청과 Access 로그인 시각 중 늦은 쪽."""
+    candidates = [VISITS.get(account), (USERS.get(account) or {}).get("last_login")]
+    return max((c for c in candidates if isinstance(c, str)), default=None)
 
 
 # ─────────────────────────── 사용자 테이블 ───────────────────────────

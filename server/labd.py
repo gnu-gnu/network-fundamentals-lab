@@ -214,6 +214,8 @@ class Handler(BaseHTTPRequestHandler):
         user = self._user()
         if not user:
             return self._fail(403, "미인증")
+        if not (seg and seg[0] == "assets"):
+            store.touch_visit(user)
         return self._user_get(user, seg)
 
     def _admin_get(self, what, seg):
@@ -244,14 +246,17 @@ class Handler(BaseHTTPRequestHandler):
             with LOCK:
                 users = [dict(user=u, state=r.get("status", "?"),
                               instance=r.get("instance"), ip=r.get("ip"),
-                              created=r.get("created"), stopped_at=r.get("stopped_at"))
+                              created=r.get("created"), stopped_at=r.get("stopped_at"),
+                              last_visit=store.last_visit(u))
                          for u, r in sorted(STATE["users"].items())]
+                names = accounts()
+                visits = {a: store.last_visit(a) for a in names}
                 pool = [dict(instance=p["instance"], ip=p["ip"], ready=p.get("ready", False))
                         for p in STATE["pool"]]
                 cfg = {"reclaim_days": CONFIG["reclaim_days"],
                        "pool_size": CONFIG["pool_size"]}
             return self._json(200, {"users": users, "pool": pool, "config": cfg,
-                                    "accounts": accounts()})
+                                    "accounts": names, "visits": visits})
         return self._fail(404, "없는 경로")
 
     def _user_get(self, user, seg):
@@ -322,6 +327,7 @@ class Handler(BaseHTTPRequestHandler):
         user = self._user()
         if not user:
             return self._fail(403, "미인증")
+        store.touch_visit(user)
         return self._user_post(user, seg[-1] if seg else "")
 
     def _admin_post(self, what):
@@ -512,6 +518,7 @@ def main():
     store.load_proxy_secret()
     store.load_users()
     store.load_state()
+    store.load_visits()
     reconcile()
     regen_routing()
 
