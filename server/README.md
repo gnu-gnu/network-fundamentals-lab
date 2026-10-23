@@ -74,11 +74,14 @@ labd는 이제 요청 URI 대신 사용자별 location 에 고정된 `target` �
 실패하고, labd도 Access 요청을 모두 거부한다(검사를 건너뛰어 열어 두지 않는다). 배포 전에 한 번 갱신한다.
 
 ```bash
-sudo sed -i 's|proxy_set_header X-Original-URI [$]request_uri;|proxy_set_header X-Lab-Target-User $arg_target;\n        proxy_set_header X-Lab-Auth-Scheme target;|' /etc/nginx/sites-available/netlab
+sudo cp -p /etc/nginx/sites-available/netlab /etc/nginx/sites-available/netlab.bak
+sudo sed -i 's|^\( *\)proxy_set_header X-Original-URI [$]request_uri;|&\n\1proxy_set_header X-Lab-Target-User $arg_target;\n\1proxy_set_header X-Lab-Auth-Scheme target;|' /etc/nginx/sites-available/netlab
 sudo grep -c 'X-Lab-Auth-Scheme target' /etc/nginx/sites-available/netlab   # 2 가 정상
 sudo nginx -t && sudo systemctl reload nginx
 ```
 
+옛 `X-Original-URI` 줄은 새 labd 가 무시하므로 배포 중에 남아 있어도 되며, 배포가 끝난 뒤 지워도 된다.
+이 순서(사이트 갱신 → labd 배포)면 옛 labd 와 새 labd 모두 자기 헤더를 받아 중단 구간이 없다.
 사용자별 스니펫(`/etc/nginx/netlab.d/*-users.conf`)은 labd 가 기동할 때 다시 생성하므로 손대지 않는다.
 
 기본 동작은 읽기 전용 검사다. `--apply`는 의존성·JSON·LXD 이미지·Nginx를 검사하고,

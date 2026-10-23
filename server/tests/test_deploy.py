@@ -36,9 +36,10 @@ class SourceTests(unittest.TestCase):
         deploy.check_site(template)
         deploy.check_site((deploy.SOURCE / 'nginx-open.conf').read_text())
         with self.assertRaisesRegex(RuntimeError, 'predates'):
-            deploy.check_site(template.replace('X-Lab-Target-User $arg_target', 'X-Original-URI $request_uri'))
-        with self.assertRaisesRegex(RuntimeError, 'predates'):
             deploy.check_site(template.replace('X-Lab-Auth-Scheme target', 'X-Lab-Auth-Scheme legacy'))
+        # A rolling update may leave the old header next to the new ones.
+        deploy.check_site(template.replace('proxy_set_header X-Lab-Auth-Scheme target;',
+                                           'proxy_set_header X-Lab-Auth-Scheme target;\n        proxy_set_header X-Original-URI $request_uri;'))
 
     def test_deploy_list_covers_every_package_module_and_template(self):
         for path in sorted((deploy.SOURCE / 'netlab').glob('*.py')) + sorted((deploy.SOURCE / 'templates').glob('*.html')):

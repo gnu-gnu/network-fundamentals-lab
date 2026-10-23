@@ -121,7 +121,8 @@ SITE = Path('/etc/nginx/sites-available/netlab')
 
 def check_site(text):
     """The live site must hand labd the static location owner, never the raw request URI."""
-    if '/_access' in text and ('X-Original-URI' in text or 'X-Lab-Auth-Scheme target' not in text):
+    # The legacy X-Original-URI line may linger during a rolling update; labd ignores it.
+    if '/_access' in text and 'X-Lab-Auth-Scheme target' not in text:
         raise RuntimeError('Live nginx site predates target-based auth_request; '
                            'update /etc/nginx/sites-available/netlab first (README: 기존 운영 서버 업데이트)')
 
