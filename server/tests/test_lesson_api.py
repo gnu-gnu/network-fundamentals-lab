@@ -273,6 +273,50 @@ class LessonApiTests(LessonApiCase):
         self.assertEqual(code, 400)
 
 
+class AgentClientTests(unittest.TestCase):
+    """The real client: fixed command, ownership from the state record, v1 VMs probed rarely."""
+
+    def setUp(self):
+        self.calls = []
+        store.STATE.clear()
+        store.STATE.update({'users': {'alice': {'instance': 'netlab-a', 'status': 'running'},
+                                      'bob': {'instance': 'netlab-b', 'status': 'stopped'}}, 'pool': []})
+
+    def lxc(self, *args, timeout=30, stdin=None):
+        self.calls.append(args)
+        if args[:2] == ('config', 'get'):
+            return 0, INC.encode() + b'\n', ''
+        if args[:3] == ('exec', 'netlab-a', '--') and args[3] == agent_client.RUNNER_PATH:
+            return 1, b'', 'Error: no such file or directory'
+        if args[:4] == ('exec', 'netlab-a', '--', 'test'):
+            return 1, b'', ''
+        return 0, b'', ''
+
+    def test_missing_runner_is_cached(self):
+        client = agent_client.AgentClient(lxc=self.lxc)
+        with self.assertRaises(agent_client.RunnerMissing):
+            client.status('alice')
+        probes = len(self.calls)
+        with self.assertRaises(agent_client.RunnerMissing):
+            client.status('alice', fresh=True)
+        self.assertEqual(len(self.calls), probes)          # no new lxc exec within the window
+        client.forget('netlab-a')
+        with self.assertRaises(agent_client.RunnerMissing):
+            client.status('alice', fresh=True)
+        self.assertGreater(len(self.calls), probes)
+
+    def test_only_owned_running_environments(self):
+        client = agent_client.AgentClient(lxc=self.lxc)
+        for account in ('bob', 'mallory'):
+            with self.assertRaises(agent_client.AgentError) as caught:
+                client.status(account)
+            self.assertEqual(caught.exception.code, 'no_environment')
+        with self.assertRaises(agent_client.AgentError) as caught:
+            client.call('alice', {'protocol': 1, 'action': 'stop', 'request_id': 'x'})
+        self.assertEqual(caught.exception.code, 'invalid_request')
+        self.assertFalse(any(c[0] == 'exec' and c[1] != 'netlab-a' for c in self.calls))
+
+
 class LessonRouteTests(LessonApiCase):
     """labd routes /lesson/... only after authentication, and POSTs only as same-origin JSON."""
 

@@ -21,6 +21,7 @@ INCARNATION_KEY = 'user.netlab.incarnation'
 TIMEOUTS = {'status': 30, 'start': 480, 'reset': 480, 'stop': 300, 'check': 180}
 MAX_RESPONSE = 64 * 1024 + 1024
 STATUS_CACHE_SECONDS = 2.0
+MISSING_CACHE_SECONDS = 60.0   # v1 VMs have no runner; do not probe them on every panel poll
 
 
 class AgentError(Exception):
@@ -43,6 +44,7 @@ class AgentClient:
     def __init__(self, lxc=_lxc):
         self.lxc = lxc
         self._status_cache = {}
+        self._missing = {}
         self._incarnations = {}
         self._lock = threading.Lock()
 
@@ -82,6 +84,7 @@ class AgentClient:
         with self._lock:
             self._incarnations.pop(instance, None)
             self._status_cache.pop(instance, None)
+            self._missing.pop(instance, None)
 
     # ── calls ──
     def status(self, account, fresh=False):
@@ -113,6 +116,10 @@ class AgentClient:
                 self._status_cache.pop(instance, None)
 
     def _run(self, instance, request):
+        with self._lock:
+            missing_since = self._missing.get(instance)
+        if missing_since is not None and time.monotonic() - missing_since < MISSING_CACHE_SECONDS:
+            raise RunnerMissing()
         self.ensure_incarnation(instance)
         body = json.dumps(request, separators=(',', ':')).encode()
         try:
@@ -127,12 +134,14 @@ class AgentClient:
         except (UnicodeDecodeError, ValueError):
             response = None
         if not isinstance(response, dict) or response.get('protocol') != 1 or not isinstance(response.get('ok'), bool):
-            if self._missing(instance):
+            if self._runner_absent(instance):
+                with self._lock:
+                    self._missing[instance] = time.monotonic()
                 raise RunnerMissing()
             raise AgentError('runner_error', '실습 실행기가 올바르게 응답하지 않았습니다.', 502)
         return self._sanitize(response)
 
-    def _missing(self, instance):
+    def _runner_absent(self, instance):
         rc, _, _ = self.lxc('exec', instance, '--', 'test', '-x', RUNNER_PATH, timeout=20)
         return rc != 0
 

@@ -202,6 +202,24 @@ install은 개발 환경·전용 검증 라벨·미할당·관리 대상 여부�
 
 진행 DB는 SQLite backup API로 만든 일관된 사본을 기존 백업에 포함합니다. 실시간 DB와 WAL/SHM을 섞지 않으며 복원 후 무결성·외래키·회차와 이벤트의 관계를 검사합니다. 복원된 running job은 자동 재실행하지 않습니다. 일반 코드 롤백에서 현재 사용자 데이터를 과거 상태로 강제 복원하지 않습니다.
 
+## M1 구현에서 확정한 세부
+
+M1 구현(12장 파일럿)에서 위 계약을 구체화한 값입니다. 계약의 규칙을 바꾸지 않으며, 바꿀 때는 이 절과 테스트를 함께 고칩니다.
+
+| 항목 | 정한 값 |
+| --- | --- |
+| incarnation 위치 | LXD 설정 `user.netlab.incarnation`. VM 생성 때(clean 스냅샷 전) 넣고, 스냅샷 복원 뒤 기동 전에 새 값으로 바꿉니다. 게스트는 `/dev/lxd/sock`으로 읽습니다. 값이 없는 기존 VM은 서버가 처음 호출할 때 넣습니다 |
+| runner 설치 위치 | `/opt/netlab/releases/<id>/{runner,packs/<pack>}`와 `current` 심볼릭 링크. 상태는 `/var/lib/netlab/runner/`. 서버는 `/opt/netlab/current/runner/netlab-runner`만 호출합니다 |
+| CLI와의 관계 | 변경 작업은 셸 `lab` 명령과 같은 `~lab/.netlab-switch.lock`을 잡고, containerlab을 `lab` 사용자로 작업 사본 `~lab/network-lab`에서 실행합니다. 터미널에서 다른 실습으로 바꾸면 status의 `runtime.matches`가 false가 되고 check는 conflict입니다. 회차 연결(adopted_cli)은 M2입니다 |
+| 요청 검증 | 서버와 runner가 같은 수기 검증기(`server/runner/protocol.py`)를 씁니다. Schema와 같은 사례 집합을 CI에서 함께 검사합니다. 중복 키, `7.0` 같은 비정수 세대, 16KiB 초과는 파싱 단계에서 거부합니다 |
+| 추가 오류 코드 | `failed`(변경의 단계 실패, `stage` 동반), `invalid_request`(400), `no_environment`(409), `runner_missing`(410), `runner_error`(502) |
+| 복구 사유 | `reboot`·`interrupted`는 레슨을 알면 reset·stop, 모르면 stop만 허용합니다. `state_damaged`·`exec_unconfirmed`는 runner 작업을 허용하지 않고 호스트의 초기화·교체로 복구합니다 |
+| 공용 환경 | open 모드의 `guest` 계정만 공용으로 봅니다. 같은 서버에서 자기 VM을 가진 계정의 완료는 개인 기록에 남습니다 |
+| 개발 설치 표식 | 서버 설정 `environment: development`, VM 설정 `user.netlab.verify=true`, labd가 관리하는 준비 완료 예비 VM이면서 미할당일 것 |
+| 조회 주기 | M1은 자동 check 예약이 없고 확인 버튼만 있습니다. 패널은 15초마다 상태를 읽습니다. runner가 없는 VM은 410을 받은 뒤 패널이 5분, 서버가 60초 동안 다시 조회하지 않습니다 |
+
+M1의 개발 설치는 clean 스냅샷을 만든 뒤에 runner를 넣습니다. 그래서 그 VM을 초기화하면 runner도 사라져 410이 됩니다. runner를 스냅샷 전에 담는 이미지 배포는 M3 범위입니다.
+
 ## 수용 기준 변경
 
 계약과 테스트는 함께 변경합니다. 최소 수용 대상은 [구현 절차의 M1 수용표](PACK_IMPLEMENTATION_PROCEDURE.md#m1-수용-테스트)입니다. Schema의 정상 사례뿐 아니라 토큰 없는 구형 stop, 추가 argv, 음수 세대, 대상 누락, protocol 위반이 거부되는지 확인합니다. 문서 커밋은 구현 완료나 운영 배포 승인을 의미하지 않습니다.

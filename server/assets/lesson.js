@@ -15,7 +15,8 @@
     interrupted:'이전 작업이 중간에 끊겼습니다. 다시 실행하지 않았습니다. 초기화하거나 종료하세요.',
     state_damaged:'실습 상태 기록이 손상되었습니다. 자동으로 정리하지 않았습니다. 상단의 환경 초기화(되돌리기)나 환경 교체로 복구하세요.',
     exec_unconfirmed:'확인 명령이 멈췄는지 확인하지 못해 변경을 막았습니다. 상단의 환경 초기화(되돌리기)로 복구하세요.'};
-  let st=null, lesson=null, selected=null, working=false, timer=null, loading=false;
+  let st=null, lesson=null, selected=null, working=false, timer=null, loading=false, missingUntil=0;
+  const MISSING_BACKOFF=300000;   // a VM without a runner gets one only by replacement; poll rarely
 
   function uuid(){
     const b=new Uint8Array(16); crypto.getRandomValues(b);
@@ -37,7 +38,8 @@
     if(loading||!running()) return; loading=true;
     try{
       const r=await api('lesson/state');
-      if(r.status===410){ panel.hidden=true; st=null; return; }
+      if(r.status===410){ panel.hidden=true; st=null; missingUntil=Date.now()+MISSING_BACKOFF; return; }
+      missingUntil=0;
       if(r.status!==200){ panel.hidden=false; say(r.body.message||'단계형 실습 상태를 읽지 못했습니다.'); return; }
       st=r.body; panel.hidden=false;
       const pick=$('lessonpick');
@@ -231,6 +233,7 @@
     restoreHints();
   }
   function tick(){
+    if(Date.now()<missingUntil) return;
     if(running()&&!document.hidden&&!working) load().then(reloadHints);
     else if(!running()){ panel.hidden=true; }
   }
