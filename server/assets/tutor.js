@@ -26,6 +26,7 @@
     }
     opened=open;closing=!open;localStorage.setItem(key+':open',String(opened));layout();
     if(opened) {
+      loadModels();
       window.dispatchEvent(new CustomEvent('netlab:panel-open',{detail:'tutor'}));
       if(innerWidth<1400) panel.scrollIntoView({block:'start',behavior:'instant'});
       document.getElementById('tutorinput').focus({preventScroll:true});
@@ -67,7 +68,8 @@
   const modelButton=document.getElementById('tutormodel'),modelDialog=document.getElementById('tutormodeldialog');
   let models=[],selectedModel=localStorage.getItem(key+':model')||'';
   modelButton.disabled=true;
-  modelButton.onclick=()=>modelDialog.showModal();
+  async function openModels(){await loadModels();if(models.length)modelDialog.showModal();}
+  modelButton.onclick=openModels;
   modelDialog.addEventListener('keydown',event=>event.stopPropagation());
   modelDialog.addEventListener('click',event=>{if(event.target===modelDialog)modelDialog.close();});
   function renderModels(data) {
@@ -75,9 +77,13 @@
     models=data.models;
     if(!models.some(model=>model.id===selectedModel))selectedModel=data.default_model||models[0]?.id||'';
     const selected=models.find(model=>model.id===selectedModel);
-    modelButton.onclick=()=>modelDialog.showModal();
+    modelButton.onclick=openModels;
     modelButton.textContent=selected?'모델: '+selected.label+' ▾':'모델 선택';
     modelButton.disabled=busy||sending||!models.length;
+    if(!models.length)status.textContent='관리자가 제공 중인 모델이 없습니다.';
+    for(const button of panel.querySelectorAll('.tutor-actions button, #tutorsend')) {
+      if((button.getAttribute('onclick')||'').includes('tutorSend'))button.disabled=busy||sending||!models.length;
+    }
     const options=document.getElementById('tutormodeloptions');options.replaceChildren();
     for(const model of models){
       const button=document.createElement('button');button.type='button';
@@ -246,10 +252,10 @@
     busy = pending;
     renderModels(data);
     for (const button of panel.querySelectorAll('.tutor-actions button, #tutorsend')) {
-      if ((button.getAttribute('onclick') || '').includes('tutorSend')) button.disabled = pending;
+      if ((button.getAttribute('onclick') || '').includes('tutorSend')) button.disabled = pending||!models.length;
     }
     const level = data.messages.at(-1)?.help_level || 0;
-    status.textContent = data.stale ? '환경이 바뀌었습니다. 새 대화를 시작하세요.' : pending ? '응답을 준비 중입니다…' :
+    status.textContent = data.stale ? '환경이 바뀌었습니다. 새 대화를 시작하세요.' : pending ? '응답을 준비 중입니다…' : !models.length ? '관리자가 제공 중인 모델이 없습니다.' :
       '도움 단계: ' + ['관찰 방향', '증거 비교', '원인 설명', '수정 명령'][level] +
       (share.disabled ? ' · 공용 VM의 명령 기록 전달은 비활성화됩니다.' : '');
     clearTimeout(timer);
@@ -262,6 +268,7 @@
   }
   window.tutorSend = async (message, inspect = false, mode = 'chat') => {
     if (sending || busy) return;
+    if(!models.length){status.textContent='사용 가능한 모델이 없습니다. 관리자에게 문의하세요.';return;}
     const input = document.getElementById('tutorinput');
     message = message || input.value.trim();
     if (!message && mode === 'reflection') message = '원인·관찰 근거·네트워크 원리를 내가 먼저 설명할 수 있게 질문해 줘.';

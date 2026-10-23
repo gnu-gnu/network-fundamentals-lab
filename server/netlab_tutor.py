@@ -198,14 +198,15 @@ def build_observe_prompt(chapter, snap, attempt):
 
 def model_options(cfg):
     """Return public labels only; endpoints/credentials never leave the server."""
-    models = cfg.get('models') or {}
-    if not models:
+    if 'models' not in cfg:
         return [{'id': 'default', 'label': '기본 모델'}], 'default'
+    models = cfg['models']
     if not isinstance(models, dict) or any(not isinstance(v, dict) for v in models.values()):
         raise ValueError('모델 설정이 올바르지 않습니다.')
-    default = cfg.get('default_model', next(iter(models)))
+    models = {key: value for key, value in models.items() if value.get('enabled', True)}
+    default = cfg.get('default_model', next(iter(models), ''))
     if default not in models:
-        raise ValueError('기본 모델 설정이 올바르지 않습니다.')
+        default = next(iter(models), '')
     return [{'id': key, 'label': str(value.get('label', key))[:80]} for key, value in models.items()], default
 
 

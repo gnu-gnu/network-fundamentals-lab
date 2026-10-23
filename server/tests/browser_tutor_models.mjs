@@ -22,19 +22,24 @@ window.fetch=(url,options)=>{
 };`});
 await cmd('Page.navigate',{url:process.argv[2]||'http://127.0.0.1:18899/u/guest/ctl/'});
 await wait('document.getElementById("tutormodel")?.textContent.includes("Qwen")');
+await ev('document.getElementById("running").classList.remove("hide")');
 await ev('document.getElementById("tutorlauncher").click()');
 await new Promise(r=>setTimeout(r,350));
 for(const width of [390,768,1366,1920]){
  await cmd('Emulation.setDeviceMetricsOverride',{width,height:900,deviceScaleFactor:1,mobile:false});
  await ev('document.getElementById("tutormodel").click()');
+ await wait('document.getElementById("tutormodeldialog").open');
  assert(await ev('(()=>{const d=document.getElementById("tutormodeldialog"),r=d.getBoundingClientRect();return d.open&&r.left>=0&&r.right<=innerWidth&&r.top>=0&&r.bottom<=innerHeight&&document.activeElement.closest("dialog")===d})()'));
  await ev('document.getElementById("tutormodeldialog").close()');
 }
-await ev('document.getElementById("tutormodel").click();document.querySelectorAll(".tutor-model-option")[1].click();tutorSend("ARP 설명")');
+await ev('document.getElementById("tutormodel").click()');
+await wait('document.getElementById("tutormodeldialog").open');
+await ev('document.querySelectorAll(".tutor-model-option")[1].click();tutorSend("ARP 설명")');
 await wait('sent.length===1 && !document.getElementById("tutormodel").disabled');
 assert.equal(await ev('sent[0].model'),'muse');
 assert(await ev('!document.getElementById("tutormodeldialog").open && document.getElementById("tutorlog").textContent.includes("Muse Glimmer")'));
 await ev('document.getElementById("tutormodel").click()');
+await wait('document.getElementById("tutormodeldialog").open');
 await cmd('Input.dispatchKeyEvent',{type:'keyDown',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
 await cmd('Input.dispatchKeyEvent',{type:'keyUp',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
 await wait('!document.getElementById("tutormodeldialog").open');

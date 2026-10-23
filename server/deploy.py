@@ -32,7 +32,7 @@ def _tree(*patterns):
 # 소스 트리에 있어도 배포하지 않는 것: tests/, config/ 예제, 이 두 설치 스크립트.
 FILES = (
     'labd.py', 'netlab_tutor.py', 'packs.py', 'runtimes.py', 'tutor_chat.py', 'knowledge.py', 'guide_view.py',
-    'community_chat.py', 'community_auth.py', 'community_ws.py', 'notice_board.py',
+    'community_chat.py', 'community_auth.py', 'community_ws.py', 'notice_board.py', 'tutor_models.py',
     'requirements-community.txt',
     'netlab-user', 'netlab-record', 'netlab-backup',
     'lab-session', 'lab-shell.sh', 'ttyd-lab', 'apply-shell.sh', 'netguard.sh', 'guest-bootstrap.sh',

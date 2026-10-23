@@ -72,6 +72,7 @@
 </style>
 <link rel=stylesheet href="assets/player.css">
 <link rel=stylesheet href="assets/replay.css">
+<link rel=stylesheet href="assets/admin-models.css">
 <div class=wrap>
   <p class=eyebrow>Network Fundamentals Lab</p>
   <h1>관리자 콘솔</h1>
@@ -80,6 +81,36 @@
     <span class=upd id=hupd></span></div>
   <div class="hbanner" id=hbanner></div>
   <div class=hgrid id=hgrid></div>
+
+  <section aria-labelledby=aimodeltitle>
+    <div class=hhead><h2 id=aimodeltitle>AI 튜터 모델 관리</h2><div><button type=button id=modelrefresh>새로고침</button><button type=button id=modeladd>모델 추가</button></div></div>
+    <p class=model-description>사용자에게 제공할 모델과 기본 모델을 정합니다. 저장하면 다음 모델 선택·질문부터 적용됩니다.</p>
+    <div class=tw><table><thead><tr><th>표시명</th><th>모델 ID</th><th>사용자 노출</th><th>기본</th><th>관리</th></tr></thead>
+      <tbody id=modelrows><tr><td colspan=5 class=empty>불러오는 중…</td></tr></tbody></table></div>
+    <p id=modelstatus class=model-description role=status aria-live=polite></p>
+  </section>
+  <dialog id=modeleditor aria-labelledby=modeleditortitle>
+    <form id=modelform>
+      <div class=hhead><h3 id=modeleditortitle>모델 추가</h3><button type=button id=modelclose aria-label="모델 편집 닫기">닫기 ×</button></div>
+      <div class=model-fields>
+        <label>관리 ID<input id=modelid required maxlength=64 pattern="[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}" autocomplete=off><small>등록 후 변경되지 않는 식별자</small></label>
+        <label>사용자 표시명<input id=modellabel required maxlength=80></label>
+        <label>API 모델 이름<input id=modelname required maxlength=256 placeholder="예: qwen"></label>
+        <label>Chat Completions 주소<input id=modelendpoint type=url required maxlength=2048 placeholder="http://127.0.0.1:8002/v1/chat/completions"></label>
+      </div>
+      <label class=model-key>API 키<input id=modelkey type=password maxlength=4096 autocomplete=new-password placeholder="키가 필요할 때 입력"></label>
+      <label class=model-check><input id=modelclearkey type=checkbox> 저장된 API 키 제거</label>
+      <div class=model-actions>
+        <label class=model-check><input id=modelenabled type=checkbox checked> 사용자에게 노출</label>
+        <label class=model-check><input id=modeldefault type=checkbox> 기본 모델로 지정</label>
+      </div>
+      <details><summary>모델별 추론 설정</summary><p class=model-description>비워 두면 공통 설정을 사용합니다. 예: max_tokens, temperature, reasoning_effort, chat_template_kwargs</p>
+        <textarea id=modelparameters rows=7 aria-label="모델별 추론 설정 JSON" spellcheck=false>{}</textarea>
+      </details>
+      <p id=modeleditorstatus class=model-description role=status aria-live=polite></p>
+      <div class=model-actions><button type=submit id=modelsave>저장</button><button type=button id=modelcancel>취소</button></div>
+    </form>
+  </dialog>
 
   <h2>공지</h2>
   <div class=notice-admin>
@@ -228,6 +259,7 @@ health(); setInterval(health,20000);
 loadNotice(); setInterval(loadNotice,30000);
 </script>
 <script>window.LAB_REPLAY={admin:true};</script>
+<script src="assets/admin-models.js"></script>
 <script src="assets/community-transport.js"></script>
 <script src="assets/community-presence.js"></script>
 <script src="assets/player.js"></script>

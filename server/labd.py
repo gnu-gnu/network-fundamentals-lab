@@ -34,6 +34,7 @@ import knowledge
 import netlab_tutor
 import notice_board
 import tutor_chat
+import tutor_models
 from netlab import paths, store
 from netlab.access import lookup_or_create, verify_access_jwt
 from netlab.health import collect_health
@@ -66,7 +67,7 @@ USER_ASSETS = {"player.js", "player.css", "replay.js", "replay.css", "tutor.js",
                "community.js", "community.css", "community-transport.js",
                "notice.js", "notice.css", "theme.js", "terminal-theme.js"}
 ADMIN_ASSETS = {"player.js", "player.css", "replay.js", "replay.css",
-                "community-transport.js", "community-presence.js"}
+                "community-transport.js", "community-presence.js", "admin-models.js", "admin-models.css"}
 
 HELP_TIMEOUT = 120   # 도움말(LLM) 생성 상한(초)
 _HELP_POOL = ThreadPoolExecutor(max_workers=4, thread_name_prefix="help")
@@ -232,6 +233,11 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, ADMIN, "text/html; charset=utf-8")
         if what == "health":
             return self._json(200, {"items": collect_health()})
+        if what == 'models':
+            try:
+                return self._json(200, tutor_models.catalog())
+            except (OSError, ValueError):
+                return self._fail(503, '모델 설정을 읽을 수 없습니다.')
         if what == "notice":
             try:
                 return self._json(200, notice_board.status(accounts()))
@@ -344,6 +350,21 @@ class Handler(BaseHTTPRequestHandler):
         rejected = self._same_origin_json(32768)
         if rejected:
             return self._fail(*rejected)
+        if what == 'models':
+            rejected = self._same_origin_json(16384)
+            if rejected:
+                return self._fail(*rejected)
+            try:
+                body = self._body()
+                data = tutor_models.update(body)
+                log(f"튜터 모델 설정 변경: admin={admin} action={body.get('action')} id={body.get('id')}")
+                return self._json(200, data)
+            except tutor_models.Conflict as exc:
+                return self._fail(409, str(exc))
+            except ValueError as exc:
+                return self._fail(400, str(exc))
+            except OSError:
+                return self._fail(503, '모델 설정을 저장할 수 없습니다.')
         if what == 'community-ticket':
             rejected = self._same_origin_json(1024)
             if rejected:

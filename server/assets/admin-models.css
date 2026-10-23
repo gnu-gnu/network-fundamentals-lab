@@ -1,0 +1,16 @@
+.model-description{font-size:13px;color:var(--ink3);overflow-wrap:anywhere}
+.model-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.model-actions button{margin:0}
+#modeleditor{width:min(760px,calc(100vw - 32px));max-height:calc(100dvh - 40px);overflow:auto;padding:22px;border:1px solid var(--wire);border-radius:14px;background:var(--panel);color:var(--ink);box-shadow:0 20px 70px #0006}
+#modeleditor::backdrop{background:#0008;backdrop-filter:blur(3px)}
+#modeleditor h3{margin:0 0 16px}
+.model-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-bottom:12px}
+.model-fields label,.model-key{display:flex;flex-direction:column;gap:5px;font-size:13px;min-width:0}
+.model-fields small{color:var(--ink3)}
+#modeleditor input:not([type=checkbox]),#modelparameters{box-sizing:border-box;width:100%;min-width:0;font:inherit;padding:8px 10px;border:1px solid var(--wire);border-radius:7px;background:var(--bg);color:var(--ink)}
+#modelparameters{font-family:var(--mono);font-size:13px;resize:vertical}
+#modeleditor input[readonly]{opacity:.65}
+.model-check{display:inline-flex;align-items:center;gap:6px;font-size:13px;margin:10px 8px 10px 0}
+.model-check input{width:auto}
+#modelrows td:first-child{white-space:normal;overflow-wrap:anywhere;min-width:120px;max-width:240px}
+@media(max-width:600px){.model-fields{grid-template-columns:minmax(0,1fr)}#modeleditor{padding:16px}.hhead:has(#aimodeltitle){align-items:flex-start;gap:8px}}

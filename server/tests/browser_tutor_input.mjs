@@ -22,7 +22,7 @@ const originalFetch=window.fetch;window.testTutorRequests=[];const jobs=[];
 const references=${JSON.stringify(refs)};
 window.fetch=(url,options)=>{
  if(String(url).endsWith('tutor')){
-  const body=JSON.parse(options.body);const response=()=>new Response(JSON.stringify({ok:true,session:'a'.repeat(64),chapter:'01',messages:jobs,terminal_sharing_allowed:false}),{headers:{'Content-Type':'application/json'}});
+  const body=JSON.parse(options.body);const response=()=>new Response(JSON.stringify({ok:true,session:'a'.repeat(64),chapter:'01',models:[{id:'default',label:'기본 모델'}],default_model:'default',messages:jobs,terminal_sharing_allowed:false}),{headers:{'Content-Type':'application/json'}});
   if(body.action==='send'){
    window.testTutorRequests.push(body);
    return new Promise(resolve=>setTimeout(()=>{jobs.push({id:String(jobs.length),question:body.message,answer:'테스트 응답 [G1] [G2]',status:'done',evidence:references,created:Date.now()/1000});resolve(response());},300));
