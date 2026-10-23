@@ -315,28 +315,54 @@ python3 server/deploy.py --source-check
 기본 장 자료 외 추가 검색 절 수(기본 4, 1~6)다. 한국어는 형태소 분석 없는 키워드 검색과
 개념 별칭을 사용하므로 질문에 따라 검색 누락이 있을 수 있다.
 
-#### 학습 팩 v2 시범(M1·M2)
+#### 학습 팩 v2 시범(M1·M2·M3)
 
 03·12·17(OSPF/BGP)장과 shell 예제 팩(`packs/example-shell`)을 단계형 실습으로 제공하는 시범 경로다. 계약은 [구현 계약](../docs/PACK_IMPLEMENTATION_CONTRACTS.md),
 순서는 [구현 절차](../docs/PACK_IMPLEMENTATION_PROCEDURE.md)를 따른다. `build_knowledge.py`가 v1 데이터와 함께
-`knowledge/v2/catalog.json`을 만들고, 학습자 VM 안의 `netlab-runner`가 레슨을 실행한다. runner가 없는 VM(현재의
-모든 운영 VM)에서는 패널의 단계형 실습 영역이 보이지 않고 기존 화면과 같다.
+`knowledge/v2/catalog.json`을 만들고, 학습자 VM 안의 `netlab-runner`가 레슨을 실행한다. runner가 없는 VM에서는
+레슨 API가 410(`path: legacy`)과 갱신 안내를 돌려주고, 패널의 단계형 실습 영역은 보이지 않아 기존 화면과 같다.
 
-개발 서버에서만 전용 검증 VM에 runner를 넣을 수 있다. 서버 설정에 `"environment": "development"`가 있어야 하고,
-VM은 labd가 관리하는 미할당 예비 VM이며 `user.netlab.verify=true` 라벨이 있어야 한다.
+**이미지(M3).** 운영 VM은 runner를 담은 이미지에서 만든다. 이미지는 지금 설정된 이미지(또는 `--base`)에서
+빌드 VM을 띄워 runner와 카탈로그의 모든 팩 번들을 설치하고, 해설이 있는 모든 레슨을 시작→해설 적용→확인(통과)→종료로
+돌려 본 뒤 **새 별칭**으로 게시한다. 기존 별칭과 이미지는 바꾸거나 지우지 않는다. 실패하면 빌드 VM을 진단용으로 남긴다.
+지문·기반 이미지·릴리스·runner 버전과 protocol·번들 맵·검증 결과는 `/var/lib/netlab/images/<별칭>.json`에 남는다.
 
 ```bash
-python3 server/packctl.py bundle --pack network --out network-bundle.tar          # 저장소에서
+python3 server/deploy.py --stamp                                                  # 저장소에서: 소스 기준 기록
+python3 server/packctl.py bundle --pack network --out network-bundle.tar
 python3 server/packctl.py bundle --pack example-shell --out shell-bundle.tar
+# (서버 코드를 deploy.py 로 먼저 배포한 뒤) 관리 서버에서:
+sudo python3 /opt/netlab-admin/packctl.py image --alias netlab-v2-YYYYMMDD \
+    --bundle network-bundle.tar --bundle shell-bundle.tar --source <git 커밋>
+sudo python3 /opt/netlab-admin/packctl.py activate --alias netlab-v2-YYYYMMDD
+sudo python3 /opt/netlab-admin/packctl.py images                                 # 기록과 기반 이미지별 VM 수
+```
+
+`activate`는 기록이 있고, 별칭이 기록한 지문을 가리키며, 번들이 지금 서버 카탈로그와 같은 이미지만 설정
+`image`로 연결한다. 그 뒤 labd는 이전 이미지로 만든 **미할당 예비 VM**을 배정하지 않고 새 이미지로 교체한다.
+사용자에게 배정된 VM은 이미지가 달라도 그대로 둔다. 기존 사용자가 단계형 실습을 쓰려면 환경을 반납하고 새로
+받아야 하며, 이때 VM 안 작업 파일은 사라진다. 일반 초기화는 같은 VM의 clean 스냅샷 복원이라 이미지를 바꾸지 않는다.
+runner가 이미지에 들어 있으므로 초기화 뒤에도 runner가 남고 환경 식별자(incarnation)만 새로 바뀐다.
+팩 내용이 바뀌어 번들이 달라지면 같은 번들로 이미지를 새로 만들어 연결한다. 이전 이미지의 VM은 번들 불일치를
+표시하고 환경 교체를 안내한다. v1 실행 경로로 자동 우회하지 않는다.
+
+**긴급 중지와 되돌리기.** `/etc/netlab/config.json`에 `"lessons_paused": true`를 넣고 `systemctl kill -s HUP labd`를
+보내면 새 레슨 작업을 503으로 거절한다(조회·터미널·튜터는 유지). 문제가 있으면 먼저 접수를 멈추고 진행 중 작업을
+확인한 뒤 `packctl.py activate --alias netlab --legacy`로 새 VM 발급을 이전 이미지로 되돌리고, 필요하면 `deploy.py`
+백업으로 코드를 되돌린다. 진행 DB(`/var/lib/netlab/learning/progress.sqlite3`)·사용자 작업·VM은 지우지 않는다.
+
+**개발 전용 설치(M1).** 이미지 없이 확인할 때는 개발 서버의 전용 검증 VM에만 runner를 넣을 수 있다. 서버 설정에
+`"environment": "development"`가 있어야 하고, VM은 labd가 관리하는 미할당 예비 VM이며 `user.netlab.verify=true`
+라벨이 있어야 한다. 이 설치는 clean 스냅샷 뒤에 들어가므로 그 VM을 초기화하면 runner가 사라진다.
+
+```bash
 sudo python3 /opt/netlab-admin/packctl.py install --instance <VM> \
     --bundle network-bundle.tar --bundle shell-bundle.tar                        # 개발 서버에서
-sudo python3 server/tests/integration_lesson_v2.py --account <테스트 계정> [--with-cli] [--with-reboot] [--m2]
+sudo python3 server/tests/integration_lesson_v2.py --account <테스트 계정> [--with-cli] [--with-reboot] [--m2] [--m3]
 ```
 
 runner가 있는 VM의 터미널에서는 `lab 12`, `lab 17 ospf`가 runner로 시작되고 웹 패널이 그 실습을 이어 받는다.
 `lab check`는 참고용 확인이며 학습 기록은 웹의 확인 버튼으로만 남는다.
-
-운영 서버에는 이 설치 명령을 쓰지 않는다. 운영 반영은 runner를 담은 이미지로 하며(M3) 승인 후 진행한다.
 
 튜터 변경 검증은 `python3 -m unittest discover -s server/tests -q`로 실행한다.
 LXD 관리 서버에서 별도로 만든 골든 이미지 검증 VM이 있다면
@@ -368,6 +394,11 @@ sudo netlab-backup inspect /안전한백업경로/full.gpg
 - Netlab 밖의 VM, 호스트 전체 OS, Cloudflare 계정·Tunnel 자격증명, 외부 LLM 서비스,
   VM에 별도 마운트한 외부 디스크는 이 도구의 백업 범위가 아니다.
   추가 프로필·외부 디스크·커스텀 LXD 장치가 붙은 VM은 전체 백업을 거부한다.
+
+SQLite DB(튜터 대화·채팅·공지·학습 진행)는 SQLite backup API로 만든 일관된 사본만 담고 실행 중인
+WAL/SHM 파일은 섞지 않는다. `create`·`inspect`·`restore`는 모든 DB의 무결성과 외래키를, 학습 진행 DB는 회차·이벤트·
+작업·완료 기록의 관계까지 검사하고 문제가 있으면 멈춘다. 복원된 진행 기록에서 실행 중이던 작업은 labd가 시작할 때
+중단(interrupted)으로 표시하며 다시 실행하지 않는다.
 
 임시 평문은 root 전용 작업 디렉터리에 만들어지고 종료 시 삭제된다. 삭제는 보안 소거가
 아니므로 저장 매체 암호화를 권장한다. `--work-dir`으로 여유 있는 디스크를 선택한다.

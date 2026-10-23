@@ -339,6 +339,9 @@ def smoke(run, instance, bundles, lessons=None, say=print):
     return done
 
 
+GUEST_PERMISSIONS = ('getent group clab_admins >/dev/null || groupadd --system clab_admins; '
+                     'id -nG lab | tr " " "\\n" | grep -qx clab_admins || usermod -aG clab_admins lab')
+
 # Runs inside the builder after the smoke run: leave no learner-visible trace and no machine identity.
 GUEST_CLEAN = r"""
 set -eu
@@ -444,6 +447,11 @@ def build_image(alias, bundle_paths, base=None, source='', lessons=None, run=lxc
             raise ImageError(f'빌드 VM 기동 실패: {err.strip()[-300:]}')
         wait_agent(run, builder)
         run('exec', builder, '--', 'cloud-init', 'status', '--wait', timeout=900)   # degraded is fine
+        # Same repair labd applies to every VM before handing it out (instances.ensure_lab_permissions):
+        # older golden images lack the clab_admins membership containerlab needs for the lab user.
+        rc, _, err = run('exec', builder, '--', 'sh', '-c', GUEST_PERMISSIONS, timeout=60)
+        if rc != 0:
+            raise ImageError(f'실습 계정 권한 정리 실패: {err.strip()[-300:]}')
         rc, _, err = run('file', 'push', '--mode=0644', str(Path(code_dir) / 'lab-shell.sh'),
                          f'{builder}/etc/lab-shell.sh')
         if rc != 0:
@@ -656,7 +664,8 @@ def main(argv=None):
         raise SystemExit('root 로 실행하세요.')
     try:
         if args.command == 'image':
-            record = build_image(args.alias, args.bundle, base=args.base, source=args.source, lessons=args.lesson)
+            record = build_image(args.alias, args.bundle, base=args.base, source=args.source, lessons=args.lesson,
+                                 say=lambda line: print(line, flush=True))
             print(json.dumps(record, ensure_ascii=False, indent=2))
         elif args.command == 'activate':
             result = activate(args.alias, legacy=args.legacy)
