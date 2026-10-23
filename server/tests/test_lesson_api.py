@@ -26,8 +26,13 @@ class FakeClient:
         self.missing = set()
         self.calls = []
         self.check_result = {'status': 'fail', 'items': []}
-        self.env = {'state': 'idle', 'lesson': None, 'generation': 0}
+        self.envs = {account: {'state': 'idle', 'lesson': None, 'generation': 0} for account in self.owned}
         self.check_generation = None      # override the executed generation of the next check
+        self.after_call = None
+
+    @property
+    def env(self):
+        return self.envs['alice']
 
     def instance_for(self, account):
         if account not in self.owned:
@@ -41,34 +46,48 @@ class FakeClient:
         self.instance_for(account)
         if account in self.missing:
             raise agent_client.RunnerMissing()
-        return dict(ok=True, state=self.env['state'], lesson=self.env['lesson'],
-                    observed=dict(incarnation=INC, generation=self.env['generation']),
-                    bundle=self.bundle() if self.env['lesson'] else None, ready=self.env['state'] == 'running',
-                    capabilities=['status', 'start', 'reset', 'stop', 'check'],
-                    installed={'network': self.bundle()}, runtime=None, recovery=None, failure=None)
+        env = self.envs[account]
+        return dict(ok=True, state=env['state'], lesson=env['lesson'],
+                    observed=dict(incarnation=INC, generation=env['generation']),
+                    bundle=self.bundle() if env['lesson'] else None, ready=env['state'] == 'running',
+                    capabilities=['status', 'start', 'reset', 'stop', 'solve', 'check', 'probe'],
+                    installed={'network': self.bundle()}, runtime={'topologies': [], 'matches': True},
+                    recovery=None, failure=None)
 
     def call(self, account, request):
+        try:
+            return self._call(account, request)
+        finally:
+            if self.after_call:
+                self.after_call(request)
+
+    def _call(self, account, request):
         self.calls.append(request)
-        token = dict(incarnation=INC, generation=self.env['generation'])
+        env = self.envs[account]
+        token = dict(incarnation=INC, generation=env['generation'])
         if request['expected'] != token:
-            return dict(ok=False, error='conflict', observed=token, executed=None, state=self.env['state'],
-                        lesson=self.env['lesson'], message='conflict')
+            return dict(ok=False, error='conflict', observed=token, executed=None, state=env['state'],
+                        lesson=env['lesson'], message='conflict')
         action = request['action']
         if action == 'check':
-            generation = self.check_generation if self.check_generation is not None else self.env['generation']
-            return dict(ok=True, state='running', lesson=self.env['lesson'], observed=token,
+            generation = self.check_generation if self.check_generation is not None else env['generation']
+            return dict(ok=True, state='running', lesson=env['lesson'], observed=token,
                         executed=dict(incarnation=INC, generation=generation), bundle=self.bundle(),
                         result=dict(self.check_result))
-        if action == 'start' and self.env['state'] == 'running' and self.env['lesson'] == request['target_lesson']:
-            return dict(ok=True, noop=True, state='running', lesson=self.env['lesson'], observed=token,
+        if action == 'probe':
+            return dict(ok=True, state='running', lesson=env['lesson'], observed=token, executed=token,
+                        bundle=self.bundle(), result=dict(status='ok', rc=0, node='r1', output='probe output',
+                                                          truncated=False, items=[]))
+        if action == 'start' and env['state'] == 'running' and env['lesson'] == request['target_lesson']:
+            return dict(ok=True, noop=True, state='running', lesson=env['lesson'], observed=token,
                         executed=None, bundle=self.bundle())
-        self.env['generation'] += 1
+        env['generation'] += 1
         if action == 'stop':
-            self.env.update(state='idle', lesson=None)
-        else:
-            self.env.update(state='running', lesson=request.get('target_lesson') or request['lesson'])
-        new = dict(incarnation=INC, generation=self.env['generation'])
-        return dict(ok=True, state=self.env['state'], lesson=self.env['lesson'], observed=new, executed=new,
+            env.update(state='idle', lesson=None)
+        elif action != 'solve':
+            env.update(state='running', lesson=request.get('target_lesson') or request['lesson'])
+        new = dict(incarnation=INC, generation=env['generation'])
+        return dict(ok=True, state=env['state'], lesson=env['lesson'], observed=new, executed=new,
                     bundle=self.bundle())
 
 
@@ -102,14 +121,15 @@ class LessonApiCase(unittest.TestCase):
         store.CONFIG.clear()
         store.CONFIG.update(store.DEFAULTS)
 
-    def token(self):
-        return dict(incarnation=INC, generation=self.client.env['generation'])
+    def token(self, account='alice'):
+        env = self.client.envs.get(account, {'generation': 0})   # unknown accounts still send a well-formed token
+        return dict(incarnation=INC, generation=env['generation'])
 
     def post(self, account, path, body):
         return lessons.handle_post(account, path.split('/'), body)
 
     def act(self, action, account='alice', request_id=None, expected=None):
-        body = dict(request_id=request_id or str(uuid.uuid4()), expected=expected or self.token())
+        body = dict(request_id=request_id or str(uuid.uuid4()), expected=expected or self.token(account))
         path = f'lesson/network/12/{action}' if action != 'check' else 'lesson/network/12/step/verify/check'
         return self.post(account, path, body)
 
@@ -234,6 +254,66 @@ class LessonApiTests(LessonApiCase):
         self.assertEqual(self.post('alice', 'lesson/network/12/step/verify/hint', {'n': 2})[0], 200)
         self.assertEqual(self.post('alice', 'lesson/network/12/step/verify/hint', {'n': 9})[0], 400)
         self.assertEqual(self.state()[1]['attempt']['hints_opened'], {'verify': [1, 2]})
+
+    def test_solve_marks_help_and_assisted_completion(self):
+        self.act('start')
+        job = self.job('alice', self.act('solve'))[1]
+        self.assertEqual(job['state'], 'done')
+        view = self.state()[1]['attempt']
+        self.assertTrue(view['assisted'])
+        self.assertEqual(view['steps']['verify'], 'untested')            # solve bumped the generation
+        self.client.check_result = {'status': 'pass', 'items': []}
+        self.assertTrue(self.job('alice', self.act('check'))[1]['result']['progress']['completed_now'])
+        with lesson_progress.connect(immediate=False) as c:
+            self.assertEqual(c.execute('SELECT assisted FROM completion_events').fetchone()[0], 1)
+            self.assertEqual(c.execute('SELECT assisted_completions FROM lesson_summary').fetchone()[0], 1)
+
+    def test_solve_after_completion_keeps_the_unassisted_record(self):
+        self.act('start')
+        self.client.check_result = {'status': 'pass', 'items': []}
+        self.job('alice', self.act('check'))
+        self.job('alice', self.act('solve'))
+        with lesson_progress.connect(immediate=False) as c:
+            self.assertEqual(c.execute('SELECT assisted FROM completion_events').fetchone()[0], 0)
+            self.assertEqual(c.execute('SELECT assisted FROM attempts').fetchone()[0], 0)
+
+    def test_terminal_started_lesson_is_adopted_without_a_start(self):
+        self.client.env.update(state='running', lesson=LESSON, generation=4)
+        view = self.state()[1]['attempt']
+        self.assertEqual((view['origin'], view['generation']), ('adopted_cli', 4))
+        self.assertEqual(self.client.calls, [])                          # nothing was (re)deployed
+        self.client.check_result = {'status': 'pass', 'items': []}
+        self.assertTrue(self.job('alice', self.act('check'))[1]['result']['progress']['completed_now'])
+        self.client.env.update(lesson='network/03', generation=5)        # terminal switched lessons
+        view = self.state()[1]['attempt']
+        self.assertEqual((view['lesson_id'], view['origin']), ('network/03', 'adopted_cli'))
+        with lesson_progress.connect(immediate=False) as c:
+            self.assertEqual(c.execute("SELECT end_reason FROM attempts WHERE lesson_id=?", (LESSON,)).fetchone()[0],
+                             'superseded')
+
+    def test_public_lesson_reports_solvability(self):
+        self.assertTrue(lessons.handle_get('alice', ['lesson', 'network', '12'])[1]['lesson']['solvable'])
+        shell = lessons.handle_get('alice', ['lesson', 'example-shell', 'permissions'])[1]['lesson']
+        self.assertTrue(shell['solvable'])
+        self.assertIn('파일 권한', shell['steps'][0]['html'])            # format-2 read text comes from the catalog
+
+    def test_tutor_uses_registered_probes_and_never_records_checks(self):
+        self.act('start')
+        ctx = lessons.tutor_context('alice')
+        self.assertEqual((ctx['chapter'], ctx['lesson_id'], ctx['step']), ('12', LESSON, 'verify'))
+        probe = lessons.tutor_probe('alice', ctx, 'probe-1')
+        self.assertEqual(probe['output'], 'probe output')
+        self.assertEqual(self.client.calls[-1]['probe'], 'probe-1')
+        self.assertNotIn('argv', self.client.calls[-1])
+        self.client.check_result = {'status': 'pass', 'items': []}
+        result = lessons.tutor_check('alice', ctx)
+        self.assertTrue(result['passed'] and not result['recorded_as_progress'])
+        self.assertIsNone(self.state()[1]['attempt']['completed_at'])     # diagnostics are not progress
+        self.assertFalse(lessons.tutor_changed('alice', ctx))
+        self.act('reset')
+        self.assertTrue(lessons.tutor_changed('alice', ctx))
+        self.client.missing.add('bob')
+        self.assertIsNone(lessons.tutor_context('bob'))                   # v1 VM: tutor keeps its old path
 
     def test_read_step_view(self):
         self.act('start')

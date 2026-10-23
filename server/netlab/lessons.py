@@ -7,7 +7,7 @@ catalog itself, the recipe, fault text or hints they have not opened.
   GET  lesson/state                              runner status + open attempt for the current lesson
   GET  lesson/<pack>/<lesson>                    public lesson view (steps, rendered guide)
   GET  lesson/jobs/<job_id>                      own job result
-  POST lesson/<pack>/<lesson>/start|reset|stop   {request_id, expected}        → 202 {job_id}
+  POST lesson/<pack>/<lesson>/start|reset|stop|solve  {request_id, expected}   → 202 {job_id}
   POST lesson/<pack>/<lesson>/step/<step>/check  {request_id, expected}        → 202 {job_id}
   POST lesson/<pack>/<lesson>/step/<step>/view   {}                            read step done
   POST lesson/<pack>/<lesson>/step/<step>/hint   {n}                           hint n (in order)
@@ -15,6 +15,7 @@ catalog itself, the recipe, fault text or hints they have not opened.
 import json
 import os
 import re
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 
 import guide_view
@@ -65,6 +66,9 @@ def shared(account):
 
 def _render(path):
     doc = knowledge.source_by_path(path)
+    if not doc and path in CATALOG.get('documents', {}):
+        # Read-step texts of format-2 packs are carried by the v2 catalog, not the v1 corpus.
+        doc = dict(path=path, kind='guide', text=CATALOG['documents'][path]['text'])
     if not doc:
         return ''
     html = guide_view.body(doc)
@@ -81,10 +85,13 @@ def public_lesson(lesson):
         if step['kind'] == 'task':
             item['goal'] = step.get('goal')
             item['hints'] = len(step.get('hints') or [])
+            if step.get('text'):
+                item['html'] = _render(step['text'])
         steps.append(item)
     pack = CATALOG['packs'][lesson['pack']]
     return dict(id=lesson['id'], title=lesson['title'], number=lesson['number'], completion=lesson['completion'],
-                steps=steps, revision=pack['revision'], bundle=pack['bundle']['revision'])
+                steps=steps, revision=pack['revision'], bundle=pack['bundle']['revision'],
+                solvable=bool((lesson['environment'].get('hooks') or {}).get('solve')))
 
 
 def public_catalog():
@@ -218,10 +225,20 @@ def handle_get(account, seg):
     return 404, dict(ok=False, message='없는 경로')
 
 
+def adopter(account):
+    """(pack_revision, shared) for lessons the catalog knows — used to connect terminal-started lessons."""
+    def adopt(lesson_id):
+        lesson = CATALOG['lessons'].get(lesson_id)
+        if not lesson:
+            return None
+        return CATALOG['packs'][lesson['pack']]['revision'], shared(account)
+    return adopt
+
+
 def state(account):
     status = CLIENT.status(account, fresh=True)
     instance = CLIENT.instance_for(account)
-    attempt = progress.sync(account, instance, status)
+    attempt = progress.sync(account, instance, status, adopter(account))
     lesson = CATALOG['lessons'].get(status.get('lesson') or '') or (
         CATALOG['lessons'].get(attempt['lesson_id']) if attempt else None)
     view = progress.view(account, instance, lesson) if lesson else None
@@ -259,6 +276,88 @@ def handle_post(account, seg, body):
     except (AgentError, progress.Refused) as exc:
         return _fail(exc)
     return 404, dict(ok=False, message='없는 경로')
+
+
+# ─────────────────────────────── tutor ───────────────────────────────
+# The tutor never gets a generic command path: it reads the runner's view of the current lesson and
+# runs only probes registered for that lesson, by id. Its checks are diagnostics, never progress.
+
+def tutor_context(account):
+    """Current lesson facts for the tutor on a runner-equipped VM, or None (v1 VM: tutor keeps its old path)."""
+    try:
+        instance = CLIENT.instance_for(account)
+        status = CLIENT.status(account)
+    except AgentError:
+        return None
+    if not status.get('ok') or not status.get('observed'):
+        return None
+    lesson = CATALOG['lessons'].get(status.get('lesson') or '')
+    observed = status['observed']
+    ctx = dict(state=status.get('state'), observed=observed, lesson=lesson, lesson_id=status.get('lesson'),
+               bundle=status.get('bundle'), runtime_matches=(status.get('runtime') or {}).get('matches'),
+               context=f"v2:{observed['incarnation']}:{observed['generation']}:{status.get('lesson') or '-'}",
+               chapter=None, attempt_id=None, step=None, pack_revision=None)
+    if not lesson:
+        return ctx
+    ctx['chapter'] = lesson['aliases'][0] if lesson['aliases'] else lesson['id']
+    ctx['pack_revision'] = CATALOG['packs'][lesson['pack']]['revision']
+    progress.sync(account, instance, status, adopter(account))
+    view = progress.view(account, instance, lesson)
+    if view:
+        ctx['attempt_id'] = view['attempt_id']
+        pending = [s['id'] for s in lesson['steps'] if s.get('required')
+                   and view['steps'].get(s['id']) not in ('pass', 'done')]
+        ctx['step'] = pending[0] if pending else None
+        ctx['completed'] = bool(view['completed_at'])
+    return ctx
+
+
+def _inspect_request(ctx, action, **target):
+    lesson = ctx['lesson']
+    return dict(protocol=1, request_id=str(uuid.uuid4()), action=action,
+                expected=dict(ctx['observed']), lesson=lesson['id'],
+                expected_bundle=CATALOG['packs'][lesson['pack']]['bundle']['revision'], **target)
+
+
+def tutor_probe(account, ctx, probe_id):
+    """Run one registered probe of the current lesson. Returns the evidence dict the tutor shows."""
+    try:
+        response = CLIENT.call(account, _inspect_request(ctx, 'probe', probe=probe_id))
+    except AgentError as exc:
+        return dict(error=exc.message)
+    result = response.get('result') or {}
+    if not response.get('ok'):
+        return dict(error=response.get('message') or response.get('error'))
+    return dict(rc=result.get('rc'), output=result.get('output') or '', truncated=bool(result.get('truncated')),
+                status=result.get('status'), executed=response.get('executed'))
+
+
+def tutor_check(account, ctx):
+    """Diagnostic check of the current required step (never recorded as learning progress)."""
+    step = ctx.get('step') or next((s['id'] for s in ctx['lesson']['steps'] if s['kind'] == 'task'), None)
+    if not step:
+        return {'status': 'no_task', 'passed': None}
+    try:
+        response = CLIENT.call(account, _inspect_request(ctx, 'check', step=step))
+    except AgentError as exc:
+        return {'status': 'unavailable', 'passed': None, 'reason': exc.message}
+    if not response.get('ok'):
+        return {'status': response.get('error') or 'unavailable', 'passed': None, 'reason': response.get('message')}
+    result = response.get('result') or {}
+    return {'status': result.get('status'), 'passed': result.get('status') == 'pass', 'step': step,
+            'items': [dict(node=i.get('node'), result=i.get('result'), fallback_used=i.get('fallback_used'),
+                           message=i.get('message'), detail=(i.get('detail') or '')[-300:])
+                      for i in result.get('items') or []],
+            'recorded_as_progress': False}
+
+
+def tutor_changed(account, ctx):
+    """True if the environment moved on (generation, lesson or incarnation) since ctx was taken."""
+    try:
+        status = CLIENT.status(account, fresh=True)
+    except AgentError:
+        return True
+    return (status.get('observed') != ctx['observed']) or status.get('lesson') != ctx['lesson_id']
 
 
 def startup():

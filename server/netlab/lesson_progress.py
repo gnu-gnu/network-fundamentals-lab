@@ -45,7 +45,7 @@ CREATE TABLE IF NOT EXISTS lesson_summary(
   last_completed_revision TEXT, PRIMARY KEY(account, lesson_id));
 """
 
-CHANGE_ACTIONS = ('start', 'reset', 'stop')
+CHANGE_ACTIONS = ('start', 'reset', 'stop', 'solve')
 ACTIVE = ('queued', 'running')
 JOB_RETENTION_DAYS = 7
 
@@ -176,26 +176,39 @@ def _new_attempt(c, account, instance, lesson_id, observed, bundle, pack_revisio
     return attempt
 
 
-def sync(account, instance, status):
-    """Reconcile the open attempt with a fresh runner status. Never starts or adopts environments
-    (CLI adoption is M2); only closes attempts that no longer describe the environment."""
+def sync(account, instance, status, adopt=None):
+    """Reconcile the open attempt with a fresh runner status. Never starts, stops or redeploys.
+
+    Attempts that no longer describe the environment are closed. A running lesson without an attempt
+    (started from the terminal, or a start whose answer was lost) is connected to a new attempt with
+    origin 'adopted_cli' when `adopt(lesson_id)` returns (pack_revision, shared) for it.
+    """
     observed = status.get('observed')
     if not status.get('ok') or not observed:
         return current_attempt(account, instance)
     with connect() as c:
         attempt = open_attempt(c, account, instance)
-        if not attempt:
-            return None
-        if observed['incarnation'] != attempt['incarnation']:
-            _close(c, attempt, 'instance_replaced')
-            return None
-        if status.get('state') == 'idle':
-            _close(c, attempt, 'environment_idle')
-            return None
-        if status.get('lesson') != attempt['lesson_id']:
-            _close(c, attempt, 'superseded')
-            return None
-        return _advance(c, attempt, observed)
+        if attempt:
+            if observed['incarnation'] != attempt['incarnation']:
+                _close(c, attempt, 'instance_replaced')
+                attempt = None
+            elif status.get('state') == 'idle':
+                _close(c, attempt, 'environment_idle')
+                return None
+            elif status.get('lesson') != attempt['lesson_id']:
+                _close(c, attempt, 'superseded')
+                attempt = None
+            else:
+                return _advance(c, attempt, observed)
+        lesson_id = status.get('lesson')
+        if (adopt and lesson_id and status.get('state') == 'running' and status.get('ready')
+                and status.get('bundle')):
+            found = adopt(lesson_id)
+            if found:
+                pack_revision, shared = found
+                return _new_attempt(c, account, instance, lesson_id, observed, status['bundle'],
+                                    pack_revision, shared, origin='adopted_cli')
+        return None
 
 
 def _event(c, attempt, kind, step_id=None, status=None, request=None, response=None, job_id=None,
@@ -224,10 +237,18 @@ def record_change(account, instance, lesson, request, response, job_id, pack_rev
                     _close(c, attempt, 'superseded')
                     return None
                 _advance(c, attempt, observed)
+                if action == 'solve':
+                    _assisted(c, attempt)          # attempted counts as help used, even if it failed
                 _event(c, attempt, action, status='failed', request=request, response=response, job_id=job_id,
                        message=response.get('message'))
             elif attempt and observed:
                 _advance(c, attempt, observed)
+            return attempt
+        if action == 'solve':
+            if attempt and attempt['lesson_id'] == lesson['id']:
+                _advance(c, attempt, observed)
+                _assisted(c, attempt)
+                _event(c, attempt, 'solve', status='ok', request=request, response=response, job_id=job_id)
             return attempt
         if action == 'stop':
             if attempt:
@@ -249,6 +270,14 @@ def record_change(account, instance, lesson, request, response, job_id, pack_rev
         _event(c, attempt, action, status='noop' if response.get('noop') else 'ok', request=request,
                response=response, job_id=job_id)
         return attempt
+
+
+def _assisted(c, attempt):
+    """Help used before completion. A completion already recorded keeps its own assisted value."""
+    if not attempt['completed_at']:
+        c.execute('UPDATE attempts SET assisted=1 WHERE attempt_id=? AND completed_at IS NULL',
+                  (attempt['attempt_id'],))
+        attempt['assisted'] = 1
 
 
 def _task_status(c, attempt, step_id):
@@ -377,6 +406,7 @@ def view(account, instance, lesson):
         summary = c.execute('SELECT completions, first_completed_at FROM lesson_summary WHERE account=? AND lesson_id=?',
                             (account, lesson['id'])).fetchone()
         return dict(attempt_id=attempt['attempt_id'], lesson_id=attempt['lesson_id'], generation=attempt['generation'],
+                    origin=attempt['origin'], assisted=bool(attempt['assisted']),
                     incarnation=attempt['incarnation'], started_at=attempt['started_at'],
                     completed_at=attempt['completed_at'], shared=bool(attempt['shared']), steps=states,
                     hints_opened={k: sorted(v) for k, v in hints.items()}, last_check=last,

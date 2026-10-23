@@ -173,8 +173,13 @@ class AgentClient:
                                       result=text(item.get('result'), 20),
                                       rc=item.get('rc') if isinstance(item.get('rc'), int) else None,
                                       detail=text(item.get('detail'), 800),
+                                      message=text(item.get('message'), 2048),
                                       fallback_used=item.get('fallback_used') is True))
             out['result'] = dict(status=result['status'][:20], items=items[:20])
+            if isinstance(result.get('output'), str):           # probe answers
+                out['result'].update(output=result['output'][:2000], node=text(result.get('node'), 40),
+                                     rc=result.get('rc') if isinstance(result.get('rc'), int) else None,
+                                     truncated=result.get('truncated') is True)
         else:
             out['result'] = None
         for key in ('recovery', 'failure', 'runtime'):
