@@ -116,6 +116,16 @@ def validate_source():
             raise RuntimeError('Nginx source must contain placeholders only')
 
 
+SITE = Path('/etc/nginx/sites-available/netlab')
+
+
+def check_site(text):
+    """The live site must hand labd the static location owner, never the raw request URI."""
+    if '/_access' in text and ('X-Original-URI' in text or 'X-Lab-Auth-Scheme target' not in text):
+        raise RuntimeError('Live nginx site predates target-based auth_request; '
+                           'update /etc/nginx/sites-available/netlab first (README: 기존 운영 서버 업데이트)')
+
+
 def preflight():
     if os.geteuid() != 0:
         raise RuntimeError('Run on the server with sudo')
@@ -136,6 +146,8 @@ def preflight():
     run('lxc', 'network', 'show', 'lxdbr0')
     run('nginx', '-t')
     run('systemctl', 'is-active', 'labd', 'nginx')
+    if SITE.is_file():
+        check_site(SITE.read_text())
 
 
 def ensure_community_runtime():

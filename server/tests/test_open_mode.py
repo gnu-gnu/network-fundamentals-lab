@@ -73,6 +73,39 @@ class OpenModeTests(unittest.TestCase):
         self.assertIn('location /admin { return 403; }', template)
         self.assertIn('proxy_set_header X-Lab-User "guest";', template)
 
+    def test_tunnel_authorization_uses_static_location_owner(self):
+        routes = nginx.render('tunnel', ['alice'])
+        self.assertIn('auth_request /_access?target=alice;', routes)
+        template = (Path(__file__).parents[1] / 'nginx-netlab.conf').read_text()
+        self.assertIn('proxy_set_header X-Lab-Target-User $arg_target;', template)
+        self.assertEqual(template.count('proxy_set_header X-Lab-Auth-Scheme target;'), 2)
+        self.assertNotIn('X-Original-URI', template)
+
+    def test_outdated_site_fails_closed_instead_of_skipping_the_owner_check(self):
+        handler = self.labd.Handler.__new__(self.labd.Handler)
+        handler.headers = {'Cf-Access-Jwt-Assertion': 'signed', 'X-Original-URI': '/u/alice/term/'}
+        handler._send = unittest.mock.Mock(return_value='denied')
+        with patch.object(self.labd, 'verify_access_jwt', return_value='alice@example.test'), \
+                patch.object(self.labd, 'lookup_or_create',
+                             return_value=('alice', store.USERS['alice'])):
+            self.assertEqual(handler._access_check(), 'denied')
+        handler._send.assert_called_once_with(403, '', 'text/plain')
+
+    def test_access_rejects_trusted_target_mismatch_without_parsing_raw_uri(self):
+        handler = self.labd.Handler.__new__(self.labd.Handler)
+        handler.headers = {
+            'Cf-Access-Jwt-Assertion': 'signed',
+            'X-Lab-Auth-Scheme': 'target',
+            'X-Lab-Target-User': 'bob',
+            'X-Original-URI': '/u/alice/../bob/term/',
+        }
+        handler._send = unittest.mock.Mock(return_value='denied')
+        with patch.object(self.labd, 'verify_access_jwt', return_value='alice@example.test'), \
+                patch.object(self.labd, 'lookup_or_create',
+                             return_value=('alice', store.USERS['alice'])):
+            self.assertEqual(handler._access_check(), 'denied')
+        handler._send.assert_called_once_with(403, '', 'text/plain')
+
 
 if __name__ == '__main__':
     unittest.main()

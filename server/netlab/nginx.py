@@ -22,13 +22,16 @@ WS_LOCATION = '''
 '''
 
 
-def _guard(mode, ht):
+def _guard(mode, ht, user):
     if mode == "open":
         return ""
     if mode == "lan":
         return ('        auth_basic           "네트워크 실습 환경";\n'
                 f'        auth_basic_user_file {ht};')
-    return "        auth_request /_access;"
+    # Pass the statically generated location owner in the internal subrequest.
+    # Never derive authorization from $request_uri: nginx selects locations using
+    # a decoded/normalized URI while $request_uri retains the original spelling.
+    return f"        auth_request /_access?target={user};"
 
 
 def render(mode, users):
@@ -52,7 +55,7 @@ def render(mode, users):
         # 실행 중일 때만 터미널로 연결한다. 정지·발급중인 인스턴스의 IP 로 프록시하면
         # 죽은 주소에 매달려 응답이 멈춘다.
         ip = rec.get("ip") if rec.get("status") == "running" else None
-        guard = _guard(mode, ht)
+        guard = _guard(mode, ht, u)
 
         out.append(f"""
     location = /u/{u} {{ return 301 /u/{u}/ctl/; }}

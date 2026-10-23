@@ -21,7 +21,6 @@ netlab — 온디맨드 실습 환경 발급 서비스.
 import hmac
 import json
 import os
-import re
 import signal
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -187,11 +186,19 @@ class Handler(BaseHTTPRequestHandler):
         if require_admin and role != "admin":
             return self._send(403, "", "text/plain")
 
-        # 남의 환경 경로로 들어오는 것을 막는다 (관리자는 예외).
-        uri = self.headers.get("X-Original-URI", "")
-        m = re.match(r"^/u/([a-z][a-z0-9_-]{1,30})/", uri)
-        if m and m.group(1) != acct and role != "admin":
-            log(f"타인 경로 접근 차단: {acct} → {m.group(1)}")
+        # 남의 환경으로 들어오는 것을 막는다 (관리자는 예외). 대상은 nginx가
+        # 생성한 location의 고정 auth_request 인자에서 오며, 원본 요청 URI를
+        # 다시 파싱하지 않는다. nginx의 location 매칭 URI와 $request_uri의
+        # 정규화 차이를 이용한 우회를 피하기 위해서다.
+        if self.headers.get("X-Lab-Auth-Scheme") != "target":
+            # 옛 nginx 사이트(X-Original-URI)는 대상 사용자를 알려주지 못한다. 검사를 건너뛰어
+            # 열어 두는 대신 거부한다 — README '기존 운영 서버 업데이트' 의 사이트 갱신이 필요하다.
+            log("nginx 사이트가 target 기반 auth_request 를 보내지 않아 거부 (사이트 갱신 필요)")
+            return self._send(403, "", "text/plain")
+        target = self.headers.get("X-Lab-Target-User", "")
+        if target and (not NAME_RE.match(target) or
+                       (target != acct and role != "admin")):
+            log(f"타인 경로 접근 차단: {acct} → {target}")
             return self._send(403, "", "text/plain")
 
         self.send_response(200)

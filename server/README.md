@@ -61,6 +61,20 @@ sudo python3 server/deploy.py --check
 sudo python3 server/deploy.py --apply
 ```
 
+### Nginx 사이트의 auth_request 헤더 갱신 (2026-10 이후 필수)
+
+labd는 이제 요청 URI 대신 사용자별 location 에 고정된 `target` 인자로 환경 소유자를 판정한다.
+운영 사이트(`/etc/nginx/sites-available/netlab`)가 옛 템플릿(`X-Original-URI`)이면 `--check`가
+실패하고, labd도 Access 요청을 모두 거부한다(검사를 건너뛰어 열어 두지 않는다). 배포 전에 한 번 갱신한다.
+
+```bash
+sudo sed -i 's|proxy_set_header X-Original-URI [$]request_uri;|proxy_set_header X-Lab-Target-User $arg_target;\n        proxy_set_header X-Lab-Auth-Scheme target;|' /etc/nginx/sites-available/netlab
+sudo grep -c 'X-Lab-Auth-Scheme target' /etc/nginx/sites-available/netlab   # 2 가 정상
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+사용자별 스니펫(`/etc/nginx/netlab.d/*-users.conf`)은 labd 가 기동할 때 다시 생성하므로 손대지 않는다.
+
 기본 동작은 읽기 전용 검사다. `--apply`는 의존성·JSON·LXD 이미지·Nginx를 검사하고,
 labd와 채팅 서비스를 정지한 뒤 `/var/backups/netlab/release-*`에 코드·CLI·서비스 unit을 백업한다.
 코드 교체 후 두 서비스를 시작하고 인증 없는 관리자 요청의 403, 채팅 헬스 및 서비스 상태를 검사한다.

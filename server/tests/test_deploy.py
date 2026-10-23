@@ -31,6 +31,15 @@ class SourceTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, 'placeholders only'):
                 deploy.validate_source()
 
+    def test_live_site_must_use_target_based_auth_request(self):
+        template = (deploy.SOURCE / 'nginx-netlab.conf').read_text()
+        deploy.check_site(template)
+        deploy.check_site((deploy.SOURCE / 'nginx-open.conf').read_text())
+        with self.assertRaisesRegex(RuntimeError, 'predates'):
+            deploy.check_site(template.replace('X-Lab-Target-User $arg_target', 'X-Original-URI $request_uri'))
+        with self.assertRaisesRegex(RuntimeError, 'predates'):
+            deploy.check_site(template.replace('X-Lab-Auth-Scheme target', 'X-Lab-Auth-Scheme legacy'))
+
     def test_deploy_list_covers_every_package_module_and_template(self):
         for path in sorted((deploy.SOURCE / 'netlab').glob('*.py')) + sorted((deploy.SOURCE / 'templates').glob('*.html')):
             self.assertIn(str(path.relative_to(deploy.SOURCE)), deploy.FILES)
