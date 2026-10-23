@@ -26,6 +26,22 @@ def passes(expect, rc, out, err):
     return bool(re.search(expect['regex'], text, re.I))
 
 
+SCRIPT_STATUS = {0: 'pass', 1: 'fail', 2: 'unverifiable'}
+
+
+def classify_script(result):
+    """exit code is the only verdict; a result-file status that contradicts it is an error."""
+    if result.cancelled:
+        return 'cancelled'
+    if result.timed_out or result.rc is None or result.rc < 0:
+        return 'error'
+    status = SCRIPT_STATUS.get(result.rc, 'error')
+    claimed = getattr(result, 'claimed', None)
+    if claimed is not None and claimed != status:
+        return 'error'
+    return status
+
+
 def classify(item, result):
     if result.cancelled:
         return 'cancelled'
@@ -44,9 +60,13 @@ class Cancelled(Exception):
         self.confirmed = confirmed
 
 
-def run_item(adapter, ldef, item, cancel, track):
-    r = adapter.exec(ldef, item['node'], item['argv'], item.get('timeout', 30), cancel=cancel, track=track)
-    status = classify(item, r)
+def run_item(adapter, ldef, item, cancel, track, script=None):
+    if 'script' in item:
+        r = script(item, cancel)
+        status = classify_script(r)
+    else:
+        r = adapter.exec(ldef, item['node'], item['argv'], item.get('timeout', 30), cancel=cancel, track=track)
+        status = classify(item, r)
     if status == 'cancelled' or (cancel is not None and cancel.is_set()):
         raise Cancelled(r.confirmed)
     if (r.timed_out or r.cancelled) and not r.confirmed:
@@ -54,12 +74,12 @@ def run_item(adapter, ldef, item, cancel, track):
     return status, r
 
 
-def evaluate(adapter, ldef, check, cancel=None, track=None):
+def evaluate(adapter, ldef, check, cancel=None, track=None, script=None):
     """Return {'status', 'items': [...]} or raise Cancelled."""
     items = check['all'] if 'all' in check else [check]
     results = []
     for index, item in enumerate(items):
-        status, r = run_item(adapter, ldef, item, cancel, track)
+        status, r = run_item(adapter, ldef, item, cancel, track, script)
         detail = r.out + r.err
         fallback_used = False
         if status == 'fail' and item.get('fallback'):
@@ -67,8 +87,10 @@ def evaluate(adapter, ldef, check, cancel=None, track=None):
             fb_status, fb = run_item(adapter, ldef, fallback, cancel, track)
             detail += '\n[' + fallback.get('label', '보조 확인') + ']\n' + fb.out + fb.err
             status, fallback_used = fb_status, True
-        results.append(dict(index=index, label=item.get('label'), node=item['node'], result=status,
-                            rc=r.rc, detail=detail[-DETAIL:], fallback_used=fallback_used,
-                            truncated=r.truncated))
+        entry = dict(index=index, label=item.get('label'), node=item.get('node', 'host'), result=status,
+                     rc=r.rc, detail=detail[-DETAIL:], fallback_used=fallback_used, truncated=r.truncated)
+        if getattr(r, 'message', None):
+            entry['message'] = r.message
+        results.append(entry)
     worst = max((r['result'] for r in results), key=ORDER.get, default='pass')
     return dict(status=worst, items=results)

@@ -14,6 +14,8 @@ sys.path.insert(0, str(SERVER))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from runner import store  # noqa: E402
 from runner.executor import Runner  # noqa: E402
+from runner.shell import Shell  # noqa: E402
+from runner import cli  # noqa: E402
 import fake_runner_adapter  # noqa: E402
 
 INC = '11111111-2222-4333-8444-555555555555'
@@ -25,9 +27,21 @@ RECIPE = {'format': 1, 'protocol': {'min': 1, 'max': 1}, 'pack': 'network', 'les
                        {'node': 'h1', 'argv': ['ping'], 'expect': {'regex': r'mtu\s*=\s*1400'}, 'timeout': 5,
                         'fallback': {'node': 'h1', 'argv': ['ip'], 'expect': {'regex': r'\bmtu 1400\b', 'stream': 'stdout', 'rc': [0]},
                                      'timeout': 5, 'label': 'PMTU route cache'}}]}}},
-                   'probes': {}},
+                   'hooks': {'solve': 'fix.sh'},
+                   'probes': {'probe-1': {'node': 'h1', 'argv': ['ip', 'route', 'get', '10.12.2.10']}}},
     'network/04': {'dir': '04-l3-routing', 'runtime': 'containerlab', 'definition': '04.clab.yml',
-                   'prefix': 'clab-04', 'nodes': ['h1'], 'timeouts': {}, 'steps': {}, 'probes': {}}}}
+                   'prefix': 'clab-04', 'nodes': ['h1'], 'timeouts': {}, 'steps': {}, 'probes': {}},
+    'network/17-ospf': {'dir': '17-dynamic-routing', 'runtime': 'containerlab', 'definition': 'ospf.clab.yml',
+                        'prefix': 'clab-17-ospf', 'nodes': ['h1'], 'timeouts': {}, 'steps': {}, 'probes': {}},
+    'network/17-bgp': {'dir': '17-dynamic-routing', 'runtime': 'containerlab', 'definition': 'bgp.clab.yml',
+                       'prefix': 'clab-17-bgp', 'nodes': ['h1'], 'timeouts': {}, 'steps': {}, 'probes': {}}}}
+SHELL_DIR = 'packs/example-shell/permissions'
+SHELL_RECIPE = {'format': 1, 'protocol': {'min': 1, 'max': 1}, 'pack': 'example-shell', 'lessons': {
+    'example-shell/permissions': {'dir': SHELL_DIR, 'runtime': 'shell', 'definition': None, 'prefix': None,
+                                  'nodes': ['host'], 'timeouts': {'setup': 10, 'teardown': 10, 'solve': 10},
+                                  'hooks': {'setup': 'env/setup.sh', 'solve': 'env/solve.sh', 'teardown': 'env/teardown.sh'},
+                                  'steps': {'fix': {'check': {'script': 'checks/fix.sh', 'timeout': 10}}},
+                                  'probes': {'mode': {'node': 'host', 'argv': ['cat', 'MODE']}}}}}
 
 
 class RunnerCase(unittest.TestCase):
@@ -43,10 +57,38 @@ class RunnerCase(unittest.TestCase):
         pack.mkdir(parents=True)
         (pack / 'recipe.json').write_text(json.dumps(RECIPE))
         (pack / 'manifest.json').write_text(json.dumps({'pack': 'network', 'bundle': BUNDLE}))
+        fix = pack / 'files/12-mtu-pmtud/fix.sh'
+        fix.parent.mkdir(parents=True)
+        fix.write_text(f'#!/bin/sh\necho solved >> {self.prefix}/test/solved\n')
+        fix.chmod(0o755)
+        self.shell_pack()
         from runner.main import init
         init(self.paths)
         self.adapter = fake_runner_adapter.Adapter(self.paths)
-        self.runner = Runner(self.paths, {'containerlab': self.adapter})
+        self.runner = Runner(self.paths, {'containerlab': self.adapter, 'shell': Shell(self.paths)})
+
+    def shell_pack(self):
+        """A shell-runtime lesson whose hooks and check script work inside the test prefix."""
+        pack = Path(self.paths.packs) / 'example-shell'
+        base = pack / 'files' / SHELL_DIR
+        (base / 'env').mkdir(parents=True)
+        (base / 'checks').mkdir()
+        self.mode = Path(self.prefix) / 'shell-lab' / 'MODE'
+        scripts = {
+            'env/setup.sh': f'mkdir -p {self.mode.parent} && echo 644 > {self.mode} && echo setup >> {self.prefix}/test/hooks',
+            'env/solve.sh': f'echo 600 > {self.mode}',
+            'env/teardown.sh': f'rm -rf {self.mode.parent}; echo teardown >> {self.prefix}/test/hooks; '
+                               f'[ ! -f {self.prefix}/test/teardown_fails ]',
+            'checks/fix.sh': f'[ -f {self.mode} ] || exit 2; m=$(cat {self.mode}); '
+                             'if [ -f "$NETLAB_WORK_DIR/claim" ]; then echo \'{"status": "pass"}\' > "$NETLAB_RESULT"; exit 1; fi; '
+                             '[ "$m" = 600 ] && { echo \'{"message": "ok"}\' > "$NETLAB_RESULT"; exit 0; }; '
+                             'echo "{\\"message\\": \\"mode $m\\"}" > "$NETLAB_RESULT"; exit 1',
+        }
+        for name, body in scripts.items():
+            (base / name).write_text('#!/bin/bash\n' + body + '\n')
+            (base / name).chmod(0o755)
+        (pack / 'recipe.json').write_text(json.dumps(SHELL_RECIPE))
+        (pack / 'manifest.json').write_text(json.dumps({'pack': 'example-shell', 'bundle': 'c' * 64}))
 
     def fake(self, **cfg):
         current = self.adapter.cfg()
@@ -79,7 +121,7 @@ class LifecycleTests(RunnerCase):
         self.assertEqual(s['observed'], {'incarnation': INC, 'generation': 0})
         self.assertEqual(s['state'], 'idle')
         self.assertIn('check', s['capabilities'])
-        self.assertEqual(s['installed'], {'network': BUNDLE})
+        self.assertEqual(s['installed'], {'network': BUNDLE, 'example-shell': 'c' * 64})
 
     def test_start_then_same_lesson_start_is_a_noop(self):
         r = self.start()
@@ -159,9 +201,29 @@ class LifecycleTests(RunnerCase):
         r = self.start(expected=s['observed'])
         self.assertEqual(r['error'], 'conflict')                    # stop_failed is never treated as idle
 
-    def test_unsupported_actions(self):
-        r = self.send('solve', expected=self.token(), lesson='network/12', expected_bundle=BUNDLE)
+    def test_solve_runs_the_hook_and_needs_a_retest(self):
+        self.start()
+        token = self.token()
+        r = self.send('solve', expected=token, lesson='network/12', expected_bundle=BUNDLE)
+        self.assertTrue(r['ok'], r)
+        self.assertEqual(r['executed']['generation'], token['generation'] + 1)   # old check results are void
+        self.assertEqual(Path(self.prefix + '/test/solved').read_text(), 'solved\n')
+        s = self.send('status')
+        self.assertEqual((s['state'], s['ready']), ('running', True))
+
+    def test_solve_without_hook_is_unsupported(self):
+        self.start('network/04')
+        r = self.send('solve', expected=self.token(), lesson='network/04', expected_bundle=BUNDLE)
         self.assertEqual(r['error'], 'unsupported_action')
+        self.assertIsNone(r['executed'])
+
+    def test_probe_runs_only_registered_ids(self):
+        self.start()
+        self.fake(exec={'ip': {'rc': 0, 'out': '10.12.2.10 dev eth1 mtu 1400'}})
+        r = self.send('probe', expected=self.token(), lesson='network/12', expected_bundle=BUNDLE, probe='probe-1')
+        self.assertEqual((r['result']['status'], r['result']['output']), ('ok', '10.12.2.10 dev eth1 mtu 1400'))
+        r = self.send('probe', expected=self.token(), lesson='network/12', expected_bundle=BUNDLE, probe='probe-9')
+        self.assertEqual(r['error'], 'invalid_request')
 
     def test_concurrent_change_is_busy(self):
         self.start()
@@ -171,6 +233,77 @@ class LifecycleTests(RunnerCase):
         store.save_state(self.paths, state)
         r = self.send('reset', expected=self.token(), lesson='network/12', expected_bundle=BUNDLE)
         self.assertEqual(r['error'], 'busy')
+
+
+class ShellRuntimeTests(RunnerCase):
+    LESSON = 'example-shell/permissions'
+
+    def shell(self, action, **extra):
+        return self.send(action, expected=self.token(), lesson=self.LESSON, expected_bundle='c' * 64, **extra)
+
+    def hooks(self):
+        try:
+            return Path(self.prefix + '/test/hooks').read_text().split()
+        except FileNotFoundError:
+            return []
+
+    def test_lifecycle_with_hooks_and_script_check(self):
+        r = self.send('start', expected=self.token(), target_lesson=self.LESSON, expected_bundle='c' * 64)
+        self.assertTrue(r['ok'], r)
+        self.assertEqual(self.mode.read_text().strip(), '644')
+        r = self.shell('check', step='fix')
+        self.assertEqual(r['result']['status'], 'fail')
+        self.assertEqual(r['result']['items'][0]['message'], 'mode 644')
+        self.mode.write_text('600\n')
+        r = self.shell('check', step='fix')
+        self.assertEqual((r['result']['status'], r['result']['items'][0]['message']), ('pass', 'ok'))
+        self.assertTrue(self.shell('reset')['ok'])                 # no reset hook: teardown + setup
+        self.assertEqual(self.mode.read_text().strip(), '644')
+        self.assertEqual(self.hooks(), ['setup', 'teardown', 'setup'])
+        self.assertTrue(self.shell('solve')['ok'])
+        self.assertEqual(self.shell('check', step='fix')['result']['status'], 'pass')
+        self.assertEqual(self.shell('probe', probe='mode')['result']['status'], 'ok')
+        self.assertTrue(self.send('stop', expected=self.token(), lesson=self.LESSON)['ok'])
+        self.assertFalse(self.mode.exists())
+
+    def test_script_verdict_is_the_exit_code(self):
+        self.send('start', expected=self.token(), target_lesson=self.LESSON, expected_bundle='c' * 64)
+        work = Path(store.work_dir(self.paths, {'pack': 'example-shell', 'dir': SHELL_DIR}))
+        work.mkdir(parents=True, exist_ok=True)
+        (work / 'claim').write_text('x')          # script claims pass in its result file but exits 1
+        self.assertEqual(self.shell('check', step='fix')['result']['status'], 'error')
+        (work / 'claim').unlink()
+        self.mode.unlink()
+        self.assertEqual(self.shell('check', step='fix')['result']['status'], 'unverifiable')   # exit 2
+
+    def test_shell_lesson_survives_reboot(self):
+        self.send('start', expected=self.token(), target_lesson=self.LESSON, expected_bundle='c' * 64)
+        Path(self.prefix + '/test/boot_id').write_text('boot-2')
+        s = self.send('status')
+        self.assertEqual((s['state'], s['observed']['generation']), ('running', 2))
+
+    def test_switching_away_runs_the_previous_teardown_and_reports_its_failure(self):
+        self.send('start', expected=self.token(), target_lesson=self.LESSON, expected_bundle='c' * 64)
+        Path(self.prefix + '/test/teardown_fails').write_text('x')
+        r = self.start('network/12')
+        self.assertFalse(r['ok'])
+        self.assertEqual(r['stage'], 'teardown')
+        s = self.send('status')
+        self.assertEqual((s['state'], s['lesson']), ('stop_failed', self.LESSON))   # old lesson, new never started
+        self.assertNotIn('up', [c[0] for c in self.calls()])
+        os.unlink(self.prefix + '/test/teardown_fails')
+        self.assertTrue(self.send('stop', expected=s['observed'], lesson=self.LESSON)['ok'])
+        self.assertTrue(self.start('network/12')['ok'])
+
+
+class CliTests(RunnerCase):
+    def test_lab_names_map_like_the_shell_command(self):
+        self.assertEqual(cli.resolve(self.runner, '12'), 'network/12')
+        self.assertEqual(cli.resolve(self.runner, '17'), 'network/17-bgp')       # first topology file, as `lab 17`
+        self.assertEqual(cli.resolve(self.runner, '17', 'ospf'), 'network/17-ospf')
+        self.assertEqual(cli.resolve(self.runner, '17', 'isis'), None)
+        self.assertIsNone(cli.resolve(self.runner, '09'))
+        self.assertEqual(cli.resolve(self.runner, 'permissions'), 'example-shell/permissions')
 
 
 class RecoveryTests(RunnerCase):

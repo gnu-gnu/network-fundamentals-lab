@@ -47,9 +47,10 @@ def _pump(stream, tail):
 
 
 class Result:
-    def __init__(self, rc, out, err, timed_out=False, cancelled=False, truncated=False):
+    def __init__(self, rc, out, err, timed_out=False, cancelled=False, truncated=False, stopped=True):
         self.rc, self.out, self.err = rc, out, err
         self.timed_out, self.cancelled, self.truncated = timed_out, cancelled, truncated
+        self.stopped = stopped          # False: the child could not be confirmed ended after TERM/KILL
 
 
 def run(argv, timeout, cancel=None, env=None, cwd=None, new_group=False):
@@ -85,8 +86,22 @@ def run(argv, timeout, cancel=None, env=None, cwd=None, new_group=False):
         terminate(child, new_group)
     for reader in readers:
         reader.join(timeout=2)
+    for stream in (child.stdout, child.stderr):
+        try:
+            stream.close()
+        except OSError:
+            pass
+    stopped = child.poll() is not None and (not new_group or not _group_alive(child.pid))
     return Result(child.returncode, out_tail.text(), err_tail.text(), timed_out, cancelled,
-                  out_tail.truncated or err_tail.truncated)
+                  out_tail.truncated or err_tail.truncated, stopped)
+
+
+def _group_alive(pgid):
+    try:
+        os.killpg(pgid, 0)
+        return True
+    except (ProcessLookupError, PermissionError):
+        return False
 
 
 def terminate(child, group=False, grace=3):
@@ -102,7 +117,9 @@ def terminate(child, group=False, grace=3):
     try:
         child.wait(timeout=grace)
     except subprocess.TimeoutExpired:
-        send(signal.SIGKILL)
+        pass
+    if group and _group_alive(child.pid) or child.poll() is None:
+        send(signal.SIGKILL)       # the whole group: scripts may leave children behind
         try:
             child.wait(timeout=grace)
         except subprocess.TimeoutExpired:

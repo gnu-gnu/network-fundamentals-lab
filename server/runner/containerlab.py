@@ -12,7 +12,7 @@ import shutil
 import time
 import uuid
 
-from . import proc
+from . import proc, store
 
 MISSING_MARKERS = ('No such container', 'is not running', 'not found', 'OCI runtime exec failed',
                    'Error response from daemon')
@@ -27,6 +27,33 @@ class ExecResult:
         self.confirmed, self.truncated = confirmed, truncated
 
 
+def run_host(argv, timeout, cancel=None):
+    """Run a declared command on the learner VM itself (node 'host'), as root, in its own group."""
+    r = proc.run(list(argv), timeout, cancel=cancel, new_group=True)
+    transport = r.rc == 127 and not r.timed_out and not r.cancelled and (
+        'No such file' in r.err or 'not found' in r.err or not r.out)
+    return ExecResult(r.rc, r.out, r.err, transport, r.timed_out, r.cancelled, r.stopped, r.truncated)
+
+
+def copy_work(paths, ldef, bundle_dir, target):
+    """Create a lesson work copy from the bundle if absent. Never overwrites learner edits."""
+    source = os.path.join(bundle_dir, 'files', ldef['dir'])
+    if not os.path.isdir(source):
+        return False
+    if not os.path.isdir(target):
+        shutil.copytree(source, target)
+        uid = store.lab_uid(paths)
+        if uid is not None:
+            for current, dirs, files in os.walk(target):
+                for name in [current] + [os.path.join(current, n) for n in dirs + files]:
+                    os.chown(name, uid, uid)
+            parent = os.path.dirname(target)
+            while parent.startswith(paths.lab_home + os.sep):
+                os.chown(parent, uid, uid)
+                parent = os.path.dirname(parent)
+    return True
+
+
 class Containerlab:
     name = 'containerlab'
 
@@ -35,7 +62,7 @@ class Containerlab:
 
     # ── paths ──
     def lesson_dir(self, ldef):
-        return os.path.join(self.paths.work_root, ldef['dir'])
+        return store.work_dir(self.paths, ldef)
 
     def topology(self, ldef):
         return os.path.join(self.lesson_dir(ldef), ldef['definition'])
@@ -45,26 +72,13 @@ class Containerlab:
 
         Existing work copies are never overwritten: the learner may have edited them.
         """
-        target = self.lesson_dir(ldef)
         if os.path.exists(self.topology(ldef)):
             return True
-        source = os.path.join(bundle_dir, 'files', ldef['dir'])
-        if not os.path.isdir(source):
-            return False
-        shutil.copytree(source, target, dirs_exist_ok=True)
-        uid = self._lab_uid()
-        if uid is not None:
-            for current, dirs, files in os.walk(target):
-                for name in [current] + [os.path.join(current, n) for n in dirs + files]:
-                    os.chown(name, uid, uid)
+        copy_work(self.paths, ldef, bundle_dir, self.lesson_dir(ldef))
         return os.path.exists(self.topology(ldef))
 
-    def _lab_uid(self):
-        import pwd
-        try:
-            return pwd.getpwnam(self.paths.lab_user).pw_uid
-        except KeyError:
-            return None
+    def containers(self, ldef):
+        return [n for n in ldef['nodes'] if n != 'host']
 
     def _as_lab(self, argv):
         return ['runuser', '-u', self.paths.lab_user, '--', 'env', 'HOME=' + self.paths.lab_home, *argv]
@@ -92,7 +106,7 @@ class Containerlab:
 
     def ready(self, ldef):
         states = self.node_states(ldef)
-        return bool(states) and all(states.get(node) == 'running' for node in ldef['nodes'])
+        return bool(states) and all(states.get(node) == 'running' for node in self.containers(ldef))
 
     def current(self, ldef):
         """True if this lesson's topology (and only from the work copy) is deployed."""
@@ -116,13 +130,14 @@ class Containerlab:
         topologies = self.running_topologies()
         if topologies is None:
             return False, 'docker 상태를 읽지 못했습니다.'
-        root = os.path.realpath(self.paths.work_root)
+        roots = [os.path.realpath(self.paths.work_root), os.path.realpath(self.paths.labs_root)]
         targets = []
         for topo in topologies:
             resolved = os.path.realpath(topo)
             if keep and resolved == os.path.realpath(keep):
                 continue
-            if not resolved.startswith(root + os.sep) or not resolved.endswith('.clab.yml'):
+            inside = any(resolved.startswith(root + os.sep) for root in roots)
+            if not inside or not resolved.endswith(('.clab.yml', '.clab.yaml')):
                 return False, f'실습 폴더 밖의 토폴로지는 자동으로 철거하지 않습니다: {topo}'
             if not os.path.isfile(resolved):
                 return False, f'토폴로지 파일이 없어 안전하게 철거할 수 없습니다: {topo}'
@@ -138,6 +153,8 @@ class Containerlab:
 
     # ── commands inside nodes ──
     def exec(self, ldef, node, argv, timeout, cancel=None, track=None):
+        if node == 'host':
+            return run_host(argv, timeout, cancel)
         container = ldef['prefix'] + '-' + node
         pidfile = f'/tmp/.netlab-exec-{uuid.uuid4().hex}.pid'
         if track:

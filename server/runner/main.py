@@ -39,6 +39,9 @@ def main(argv=None):
     paths = store.Paths()
     if argv == ['--init']:
         result = init(paths)
+    elif argv[:1] == ['--cli']:
+        from . import cli
+        return cli.main(argv[1:])
     else:
         raw = sys.stdin.buffer.read(MAX_REQUEST + 1)
         try:

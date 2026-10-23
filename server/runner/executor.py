@@ -1,32 +1,37 @@
-"""Runner actions: status/start/reset/stop/check (M1). solve/probe are refused as unsupported.
+"""Runner actions: status, start, reset, stop, solve, check, probe.
 
 Locks
   ctl.lock   short critical sections around state reads/writes and reservations
-  exec.lock  held for the whole duration of a change or a check (one environment user at a time)
+  exec.lock  held for the whole duration of a change or an inspection (check/probe)
   cli lock   ~lab/.netlab-switch.lock, shared with the shell `lab` command; held by changes only
 
-Order of a change: ctl → verify tokens/state → take cli lock → reserve → (cancel a running check and
-confirm it ended) → exec lock → ctl → re-verify tokens → generation+1 and an incomplete-op marker are
-made durable → perform → ctl → final state. Changes never wait for each other: they get `busy`.
+Order of a change: ctl → verify tokens/state → take cli lock → reserve → (cancel a running inspection
+and confirm it ended) → exec lock → ctl → re-verify tokens → generation+1 and an incomplete-op marker
+are made durable → perform → ctl → final state. Changes never wait for each other: they get `busy`.
 """
 import json
 import os
 import signal
+import tempfile
 import time
 
 from . import checks, proc, store
 from .containerlab import Containerlab
 from .protocol import PROTOCOL, ProtocolError, parse
+from .shell import Shell
 
-CAPABILITIES = ['status', 'start', 'reset', 'stop', 'check']
+CAPABILITIES = ['status', 'start', 'reset', 'stop', 'solve', 'check', 'probe']
 MAX_RESPONSE = 64 * 1024
 CANCEL_GRACE = 8.0
 KILL_GRACE = 2.0
-TRANSITIONAL = {'start': 'starting', 'reset': 'resetting', 'stop': 'stopping'}
+RESULT_LIMIT = 4096
+PROBE_OUTPUT = 2000
+TRANSITIONAL = {'start': 'starting', 'reset': 'resetting', 'stop': 'stopping', 'solve': 'solving'}
 ALLOWED = {
     'start': {'idle', 'running', 'start_failed', 'reset_failed'},
     'reset': {'running', 'reset_failed'},
     'stop': {'running', 'start_failed', 'reset_failed', 'stop_failed'},
+    'solve': {'running'},
 }
 MESSAGES = {
     'busy': '다른 작업이 진행 중입니다. 끝난 뒤 다시 시도하세요.',
@@ -42,7 +47,10 @@ MESSAGES = {
 class Runner:
     def __init__(self, paths=None, adapters=None):
         self.paths = paths or store.Paths()
-        self.adapters = adapters or {'containerlab': Containerlab(self.paths)}
+        self.adapters = adapters or {'containerlab': Containerlab(self.paths), 'shell': Shell(self.paths)}
+
+    def adapter(self, ldef):
+        return self.adapters[(ldef or {}).get('runtime') or 'containerlab']
 
     # ─────────────────────────── bundle ───────────────────────────
     def installed(self):
@@ -76,6 +84,9 @@ class Runner:
     def bundle_dir(self, pack):
         return os.path.join(self.paths.packs, pack)
 
+    def bundle_file(self, ldef, relative):
+        return os.path.join(self.bundle_dir(ldef['pack']), 'files', ldef['dir'], relative)
+
     # ─────────────────────────── responses ───────────────────────────
     def respond(self, request, state, ok, error=None, message=None, executed=None, result=None, **extra):
         observed = None
@@ -96,6 +107,8 @@ class Runner:
             for item in result.get('items', []):
                 item['detail'] = item.get('detail', '')[-200:]
                 item['truncated'] = True
+            if isinstance(result.get('output'), str):
+                result['output'] = result['output'][:500]
         return body
 
     # ─────────────────────────── preparation ───────────────────────────
@@ -113,9 +126,12 @@ class Runner:
             state['generation'] += 1
             state['boot_id'] = boot
             state['check'] = state['reserve'] = None
+            ldef = state.get('lesson_def') or {}
             if state.get('op'):
                 self._interrupt(state, 'interrupted')
-            elif state['state'] in ('running', 'starting', 'resetting', 'stopping'):
+            elif state['state'] == 'running' and state.get('ready') and ldef.get('runtime') == 'shell':
+                pass       # files on the VM disk survive a restart; the durable ready marker is enough
+            elif state['state'] in ('running', 'starting', 'resetting', 'stopping', 'solving'):
                 # Container links do not survive a VM restart; never resume as running unverified.
                 state.update(state='recovery_required', ready=False,
                              recovery=dict(reason='reboot', allowed=self._recovery_actions(state)))
@@ -178,8 +194,8 @@ class Runner:
             if ctl:
                 ctl.release()
             return self.respond(request, state, False, error='unsupported_action')
-        if action == 'check':
-            return self.check(request)
+        if action in ('check', 'probe'):
+            return self.inspect(request)
         return self.change(request)
 
     # ─────────────────────────── status ───────────────────────────
@@ -212,17 +228,20 @@ class Runner:
         return {pack: manifest['bundle'] for pack, (manifest, _) in self.installed().items()}
 
     def _runtime_view(self, state):
-        adapter = self.adapters['containerlab']
-        topologies = adapter.running_topologies()
+        clab = self.adapters['containerlab']
+        topologies = clab.running_topologies()
         if topologies is None:
             return dict(topologies=None, matches=None)
-        root = os.path.realpath(self.paths.work_root)
-        shown = [os.path.relpath(os.path.realpath(t), root) if os.path.realpath(t).startswith(root + os.sep)
+        home = os.path.realpath(self.paths.lab_home)
+        shown = [os.path.relpath(os.path.realpath(t), home) if os.path.realpath(t).startswith(home + os.sep)
                  else t for t in topologies]
         matches = None
         ldef = state.get('lesson_def')
         if ldef and state['state'] == 'running':
-            matches = adapter.current(ldef) and len(topologies) == 1
+            if ldef.get('runtime') == 'shell':
+                matches = not topologies          # a terminal-started topology means someone switched away
+            else:
+                matches = bool(clab.current(ldef)) and len(topologies) == 1
         elif state['state'] == 'idle':
             matches = not topologies
         return dict(topologies=shown, matches=matches)
@@ -254,10 +273,14 @@ class Runner:
             return None, None, ldef, bundle
         if request['lesson'] != state.get('lesson'):
             return 'conflict', '요청한 실습이 현재 실습과 다릅니다.', None, None
-        if action == 'reset':
+        if action in ('reset', 'solve'):
             ldef, bundle = self.lesson_def(request['lesson'])
             if not ldef or bundle != request['expected_bundle']:
                 return 'bundle_mismatch', None, None, None
+            if action == 'solve' and not (ldef.get('hooks') or {}).get('solve'):
+                return 'unsupported_action', '이 실습은 해설 적용(solve)을 제공하지 않습니다.', None, None
+            if action == 'solve' and not state.get('ready'):
+                return 'conflict', '실습이 실행 중일 때만 해설을 적용할 수 있습니다.', None, None
             return None, None, ldef, bundle
         return None, None, state.get('lesson_def'), state.get('bundle')     # stop: no bundle requirement
 
@@ -301,6 +324,7 @@ class Runner:
                 return self.respond(request, state, False, error='busy',
                                     message='터미널에서 실습을 전환하는 중입니다. 끝난 뒤 다시 시도하세요.')
             running_check = state.get('check') if self._alive(state.get('check')) else None
+            previous = state.get('lesson_def') if state['state'] != 'idle' else None
             state['reserve'] = self._me(request)
             store.save_state(self.paths, state)
             reserved = True
@@ -344,7 +368,8 @@ class Runner:
                 executed = dict(incarnation=state['incarnation'], generation=state['generation'])
             finally:
                 ctl.release()
-            ok, stage, log = self.perform(request['action'], ldef)
+            ok, stage, log, previous_failed = self.perform(request['action'], ldef, previous)
+
             def finish(s):
                 s['op'] = None
                 if ok:
@@ -352,9 +377,16 @@ class Runner:
                         s.update(state='idle', lesson=None, lesson_def=None, bundle=None, ready=False, stage=None)
                     else:
                         s.update(state='running', ready=True, stage=None)
+                elif previous_failed:
+                    # The old lesson could not be stopped: it is still (partly) there; the new one never started.
+                    s.update(state='stop_failed', lesson=previous['id'], lesson_def=previous,
+                             bundle=s.get('bundle'), ready=False, stage=stage,
+                             failure=dict(stage=stage, log_tail=log[-4000:]))
                 else:
                     s.update(state=request['action'] + '_failed', ready=False, stage=stage,
                              failure=dict(stage=stage, log_tail=log[-4000:]))
+                if request['action'] == 'solve' and not ok:
+                    s.update(state='running', ready=True)     # a failed solve leaves the lesson running
             state = self._update(finish)
             response = self.respond(request, state, ok, executed=executed,
                                     error=None if ok else 'failed',
@@ -373,33 +405,126 @@ class Runner:
     def _noop_start(self, state, ldef):
         if state['state'] != 'running' or state.get('lesson') != ldef['id'] or not state.get('ready'):
             return False
-        adapter = self.adapters[ldef['runtime']]
-        return bool(adapter.current(ldef)) and adapter.ready(ldef)
+        adapter = self.adapter(ldef)
+        current = adapter.current(ldef)
+        return (current is None or bool(current)) and adapter.ready(ldef)
 
-    def perform(self, action, ldef):
-        """Run the runtime work of a change. Returns (ok, failed_stage, log)."""
-        adapter = self.adapters[(ldef or {}).get('runtime', 'containerlab')]
+    # ─────────────────────────── performing ───────────────────────────
+    def perform(self, action, ldef, previous=None):
+        """Run the runtime work of a change. Returns (ok, failed_stage, log, previous_stop_failed)."""
+        log = []
+
+        def step(stage, fn):
+            self._stage(stage)
+            good, out = fn()
+            log.append(out or '')
+            return good
+
+        def text():
+            return '\n'.join(x for x in log if x)[-4000:]
+
+        if action == 'solve':
+            ok = step('solve', lambda: self.run_hook(ldef, 'solve'))
+            return ok, None if ok else 'solve', text(), False
+
+        if action == 'start' and previous:
+            if not step('teardown', lambda: self.run_hook(previous, 'teardown')):
+                return False, 'teardown', text(), True
+        if action in ('stop', 'reset') and ldef:
+            if action == 'reset' and (ldef.get('hooks') or {}).get('reset'):
+                ok = step('reset_hook', lambda: self.run_hook(ldef, 'reset'))
+                return ok, None if ok else 'reset_hook', text(), False
+            if not step('teardown', lambda: self.run_hook(ldef, 'teardown')):
+                return False, 'teardown', text(), False
+        clab = self.adapters['containerlab']
         timeouts = (ldef or {}).get('timeouts', {})
-        teardown, setup = timeouts.get('teardown', 180), timeouts.get('setup', 300)
-        self._stage('runtime_down')
-        ok, log = adapter.down_all(teardown)
-        if not ok:
-            return False, 'runtime_down', log
+        # One lesson at a time: also clear topologies started from the terminal (same rule as `lab`).
+        if not step('runtime_down', lambda: clab.down_all(timeouts.get('teardown', 180))):
+            return False, 'runtime_down', text(), action == 'start' and bool(previous)
         if action == 'stop':
-            return True, None, log
+            return True, None, text(), False
+        adapter = self.adapter(ldef)
         if not adapter.ensure_work_copy(ldef, self.bundle_dir(ldef['pack'])):
-            return False, 'runtime_up', '작업 사본에 토폴로지 파일이 없습니다.'
-        self._stage('runtime_up')
-        ok, up_log = adapter.up(ldef, setup)
-        log = (log + '\n' + up_log)[-4000:]
-        if not ok:
-            return False, 'runtime_up', log
+            return False, 'runtime_up', '작업 사본을 만들지 못했습니다.', False
+        if not step('runtime_up', lambda: adapter.up(ldef, timeouts.get('setup', 300))):
+            return False, 'runtime_up', text(), False
         deadline = time.monotonic() + 60
         while not adapter.ready(ldef):
             if time.monotonic() > deadline:
-                return False, 'runtime_up', log + '\n노드가 준비되지 않았습니다.'
+                return False, 'runtime_up', text() + '\n노드가 준비되지 않았습니다.', False
             time.sleep(1)
-        return True, None, log
+        for hook in ('setup', 'inject'):
+            if not step(hook, lambda hook=hook: self.run_hook(ldef, hook)):
+                return False, hook, text(), False
+        return True, None, text(), False
+
+    def hook_env(self, ldef, **extra):
+        env = dict(os.environ)
+        env.update(NETLAB_PACK=ldef['pack'], NETLAB_LESSON=ldef['id'], NETLAB_RUNTIME=ldef.get('runtime', ''),
+                   NETLAB_LESSON_DIR=self.bundle_file(ldef, ''), NETLAB_WORK_DIR=store.work_dir(self.paths, ldef),
+                   NETLAB_STATE_DIR=self.paths.state_dir, NETLAB_LOCALE='ko', HOME='/root')
+        env.update({k: str(v) for k, v in extra.items()})
+        return env
+
+    def run_hook(self, ldef, name):
+        """Run a lesson hook from the installed bundle (cwd: the work copy). Missing hook = nothing to do."""
+        relative = (ldef.get('hooks') or {}).get(name)
+        if not relative:
+            return True, ''
+        script = self.bundle_file(ldef, relative)
+        if not os.path.isfile(script) or os.path.islink(script):
+            return False, f'{name} 훅 파일이 설치되어 있지 않습니다: {relative}'
+        cwd = store.work_dir(self.paths, ldef)
+        if not os.path.isdir(cwd):
+            cwd = os.path.dirname(script)
+        timeout = (ldef.get('timeouts') or {}).get(name, 120)
+        state = self._read() or {}
+        r = proc.run([script], timeout, env=self.hook_env(ldef, NETLAB_GENERATION=state.get('generation', 0)),
+                     cwd=cwd, new_group=True)
+        out = (r.out + r.err)[-4000:]
+        if r.timed_out:
+            return False, out + f'\n{name} 훅이 {timeout}초 안에 끝나지 않았습니다.'
+        return r.rc == 0, out
+
+    def run_script_check(self, ldef, step_id):
+        """Callback for script checks: run the check from the bundle and read its result file."""
+        def run(item, cancel):
+            script = self.bundle_file(ldef, item['script'])
+            fd, result_path = tempfile.mkstemp(prefix='result-', dir=self.paths.checks)
+            os.close(fd)
+            try:
+                env = self.hook_env(ldef, NETLAB_STEP=step_id, NETLAB_RESULT=result_path,
+                                    NETLAB_GENERATION=(self._read() or {}).get('generation', 0))
+                cwd = store.work_dir(self.paths, ldef)
+                r = proc.run([script], item.get('timeout', 30), cancel=cancel, env=env,
+                             cwd=cwd if os.path.isdir(cwd) else None, new_group=True)
+                r.confirmed = r.stopped
+                r.transport = False
+                r.message, r.claimed = self._result_file(result_path)
+                return r
+            finally:
+                try:
+                    os.unlink(result_path)
+                except OSError:
+                    pass
+        return run
+
+    @staticmethod
+    def _result_file(path):
+        """(message, claimed status) from a check's result file; anything malformed is ignored."""
+        try:
+            info = os.lstat(path)
+            if not os.path.isfile(path) or os.path.islink(path) or info.st_size > RESULT_LIMIT:
+                return None, None
+            with open(path, 'rb') as f:
+                data = json.loads(f.read(RESULT_LIMIT).decode('utf-8'))
+        except (OSError, ValueError, UnicodeDecodeError):
+            return None, None
+        if not isinstance(data, dict):
+            return None, None
+        message = data.get('message') if isinstance(data.get('message'), str) else None
+        claimed = data.get('status') if data.get('status') in ('pass', 'fail', 'unverifiable', 'error') else None
+        return (message[:2048] if message else None), claimed
 
     def _stage(self, stage):
         self._update(lambda s: s.update(stage=stage))
@@ -424,7 +549,7 @@ class Runner:
 
     # ─────────────────────────── cancel ───────────────────────────
     def cancel_check(self, record):
-        """Ask a running check to stop and wait until it has. Returns (confirmed, exec_lock or None)."""
+        """Ask a running inspection to stop and wait until it has. Returns (confirmed, exec_lock or None)."""
         try:
             os.kill(record['pid'], signal.SIGTERM)
         except ProcessLookupError:
@@ -447,7 +572,7 @@ class Runner:
             target = {}
         confirmed = True
         if target.get('container'):
-            adapter = self.adapters[(record.get('runtime') or 'containerlab')]
+            adapter = self.adapters.get(record.get('runtime') or 'containerlab', self.adapters['containerlab'])
             confirmed = adapter.stop_inner(target['container'], target['pidfile'])
         try:
             os.unlink(sidecar)
@@ -459,8 +584,10 @@ class Runner:
         self._update(lambda s: s.update(check=None))
         return True, exe
 
-    # ─────────────────────────── check ───────────────────────────
-    def check(self, request):
+    # ─────────────────────────── check / probe ───────────────────────────
+    def inspect(self, request):
+        """check and probe share one path: tokens, lesson, exec lock, cancellation."""
+        kind = request['action']
         ctl, state, damaged = self.locked_state()
         if ctl is None:
             return self.respond(request, None, False, error='busy')
@@ -489,15 +616,22 @@ class Runner:
             ldef, bundle = self.lesson_def(request['lesson'])
             if not ldef or bundle != request['expected_bundle'] or bundle != state.get('bundle'):
                 return self.respond(request, state, False, error='bundle_mismatch')
-            step = ldef.get('steps', {}).get(request['step'])
-            if not step or 'check' not in step:
-                return self.respond(request, state, False, error='invalid_request',
-                                    message='등록되지 않은 단계입니다.')
+            if kind == 'check':
+                target = ldef.get('steps', {}).get(request['step'])
+                if not target or 'check' not in target:
+                    return self.respond(request, state, False, error='invalid_request',
+                                        message='등록되지 않은 단계입니다.')
+            else:
+                target = ldef.get('probes', {}).get(request['probe'])
+                if not target:
+                    return self.respond(request, state, False, error='invalid_request',
+                                        message='등록되지 않은 진단입니다.')
             exe = store.Lock(self.paths.exec_lock)
             if not exe.acquire():
                 exe = None
                 return self.respond(request, state, False, error='busy')
-            state['check'] = dict(self._me(request), runtime=ldef['runtime'], step=request['step'])
+            state['check'] = dict(self._me(request), runtime=ldef['runtime'],
+                                  step=request.get('step'), probe=request.get('probe'))
             store.save_state(self.paths, state)
             executed = dict(incarnation=state['incarnation'], generation=state['generation'])
         finally:
@@ -508,7 +642,7 @@ class Runner:
         sidecar = os.path.join(self.paths.checks, request['request_id'] + '.json')
         outcome = dict(cancelled=False, confirmed=True, unconfirmed_timeout=False)
         try:
-            adapter = self.adapters[ldef['runtime']]
+            adapter = self.adapter(ldef)
             if adapter.current(ldef) is False:
                 return self.respond(request, self._read(), False, error='conflict',
                                     message='터미널에서 실습 환경이 바뀌었습니다. 다시 시작한 뒤 확인하세요.')
@@ -523,15 +657,18 @@ class Runner:
                         pass
 
             try:
-                result = checks.evaluate(adapter, ldef, step['check'], cancel=cancel, track=track)
+                if kind == 'check':
+                    result = checks.evaluate(adapter, ldef, target['check'], cancel=cancel, track=track,
+                                             script=self.run_script_check(ldef, request['step']))
+                else:
+                    result = self.probe(adapter, ldef, target, cancel, track)
             except checks.Cancelled as exc:
                 outcome.update(cancelled=True, confirmed=exc.confirmed)
                 result = dict(status='cancelled', items=[])
             except RuntimeError as exc:
                 outcome['unconfirmed_timeout'] = True
                 result = dict(status='error', items=[], message=str(exc))
-            response = self.respond(request, self._read(), True, executed=executed, result=result)
-            return response
+            return self.respond(request, self._read(), True, executed=executed, result=result)
         finally:
             signal.signal(signal.SIGTERM, previous)
 
@@ -550,6 +687,18 @@ class Runner:
                 pass
             if exe:
                 exe.release()
+
+    def probe(self, adapter, ldef, target, cancel, track):
+        timeout = (ldef.get('timeouts') or {}).get('probe', 20)
+        r = adapter.exec(ldef, target['node'], target['argv'], timeout, cancel=cancel, track=track)
+        if r.cancelled or (cancel is not None and cancel.is_set()):
+            raise checks.Cancelled(r.confirmed)
+        if r.timed_out and not r.confirmed:
+            raise RuntimeError('inner process did not stop after timeout')
+        status = 'error' if r.timed_out else 'unverifiable' if r.transport else 'ok'
+        output = r.out + r.err
+        return dict(status=status, rc=r.rc, node=target['node'], output=output[:PROBE_OUTPUT],
+                    truncated=len(output) > PROBE_OUTPUT or r.truncated)
 
 
 class _Flag:

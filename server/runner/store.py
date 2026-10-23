@@ -35,12 +35,21 @@ class Paths:
         self.lab_home = j('/home/lab')
         self.work_root = os.path.join(self.lab_home, 'network-lab')
         self.cli_lock = os.path.join(self.lab_home, '.netlab-switch.lock')   # same lock as lab-shell `lab`
+        self.labs_root = os.path.join(self.lab_home, 'labs')
         self.devlxd = '/dev/lxd/sock'
         self.boot_id = '/proc/sys/kernel/random/boot_id'
         if self.test:
             self.devlxd = None
             self.incarnation_file = j('/test/incarnation')
             self.boot_id = j('/test/boot_id')
+
+
+def work_dir(paths, ldef):
+    """Learner's work copy of a lesson. The network pack keeps its historic ~/network-lab/<dir>
+    layout (shell `lab`/`doc`/`walk` depend on it); other packs live under ~/labs/<pack>/<lesson dir>."""
+    if ldef.get('pack', 'network') == 'network':
+        return os.path.join(paths.work_root, ldef['dir'])
+    return os.path.join(paths.labs_root, ldef['pack'], os.path.basename(ldef['dir'].rstrip('/')))
 
 
 def fsync_write(path, data, mode=0o600):
