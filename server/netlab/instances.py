@@ -16,6 +16,11 @@ from .store import CONFIG, LOCK, STATE, save_state
 from .util import iso, log
 
 
+def new_incarnation():
+    """환경 세션 식별자(UUID4). VM 이름과 섞이지 않게 별도 난수원에서 만든다."""
+    return str(uuid.UUID(bytes=os.urandom(16), version=4))
+
+
 def used_ips():
     ips = {r.get("ip") for r in STATE["users"].values() if r.get("ip")}
     ips |= {p.get("ip") for p in STATE["pool"] if p.get("ip")}
@@ -150,6 +155,13 @@ def create_instance(claim=None):
         lxc("delete", name, "--force")
         drop_pool(name)
         raise RuntimeError(f"IP 배정 실패: {err}")
+
+    # 환경 세션 식별자. clean 스냅샷에 함께 담기고, 복원 때마다 새 값으로 바꾼다(restore_for).
+    rc, _, err = lxc("config", "set", name, f"user.netlab.incarnation={new_incarnation()}")
+    if rc != 0:
+        lxc("delete", name, "--force")
+        drop_pool(name)
+        raise RuntimeError(f"환경 식별자 설정 실패: {err}")
 
     rc, _, err = lxc("start", name)
     if rc != 0:
@@ -303,6 +315,13 @@ def restore_for(user):
             rec["status"] = "running"
             save_state()
         return False, err or "복원 실패"
+    # 스냅샷은 설정까지 되돌리므로 기동 전에 새 환경 식별자를 준다. 복원 전 화면이 들고 있던
+    # 학습 팩 요청 토큰은 이것으로 모두 무효가 된다.
+    rc, _, err = lxc("config", "set", rec["instance"], f"user.netlab.incarnation={new_incarnation()}")
+    if rc != 0:
+        log(f"{user}: 복원 후 환경 식별자 설정 실패: {err}")
+    from .agent_client import CLIENT
+    CLIENT.forget(rec["instance"])
     with LOCK:
         rec["status"] = "starting"
         rec["stopped_at"] = None

@@ -24,6 +24,7 @@ RECORD_ROOT = os.path.join(VAR, "recordings")
 COMMUNITY_DB = os.path.join(VAR, "community", "chat.sqlite3")
 NOTICE_DB = os.path.join(VAR, "notice", "notice.sqlite3")
 TUTOR_DB = os.path.join(VAR, "tutor", "chat.sqlite3")
+LEARNING_DB = os.path.join(VAR, "learning", "progress.sqlite3")   # 학습 팩 v2 회차·단계 이벤트·작업
 
 NGINX_SNIPPET_DIR = "/etc/nginx/netlab.d"
 NGINX_LAN = os.path.join(NGINX_SNIPPET_DIR, "lan-users.conf")       # 사내망 직결 — basic auth

@@ -35,7 +35,7 @@ import netlab_tutor
 import notice_board
 import tutor_chat
 import tutor_models
-from netlab import paths, store
+from netlab import lessons, paths, store
 from netlab.access import lookup_or_create, verify_access_jwt
 from netlab.health import collect_health
 from netlab.instances import claim_for, destroy_for, restore_for, start_for, stop_for
@@ -65,7 +65,7 @@ def render_panel(user):
 ASSET_TYPES = {".js": "application/javascript", ".css": "text/css"}
 USER_ASSETS = {"player.js", "player.css", "replay.js", "replay.css", "tutor.js", "tutor.css",
                "community.js", "community.css", "community-transport.js",
-               "notice.js", "notice.css", "theme.js", "terminal-theme.js"}
+               "notice.js", "notice.css", "theme.js", "terminal-theme.js", "lesson.js", "lesson.css"}
 ADMIN_ASSETS = {"player.js", "player.css", "replay.js", "replay.css",
                 "community-transport.js", "community-presence.js", "admin-models.js", "admin-models.css"}
 
@@ -275,6 +275,10 @@ class Handler(BaseHTTPRequestHandler):
     def _user_get(self, user, seg):
         what = seg[-1] if seg else ""
 
+        # 학습 팩 v2 단계형 실습. 대상 환경은 언제나 인증된 계정의 소유 기록에서 정한다.
+        if seg and seg[0] == "lesson":
+            return self._json(*lessons.handle_get(user, seg))
+
         # 단일 진입점(/). nginx 의 return 은 인증보다 먼저 실행되므로 리다이렉트를
         # 여기서 만든다 — 인증을 통과해야만 도달한다.
         if what == "whoami":
@@ -341,7 +345,18 @@ class Handler(BaseHTTPRequestHandler):
         if not user:
             return self._fail(403, "미인증")
         store.touch_visit(user)
+        if seg and seg[0] == "lesson":
+            return self._lesson_post(user, seg)
         return self._user_post(user, seg[-1] if seg else "")
+
+    def _lesson_post(self, user, seg):
+        rejected = self._same_origin_json(4096)
+        if rejected:
+            return self._fail(*rejected)
+        body = self._body()
+        if not isinstance(body, dict):
+            return self._fail(400, "잘못된 요청입니다.")
+        return self._json(*lessons.handle_post(user, seg, body))
 
     def _admin_post(self, what):
         admin = self._admin()
@@ -553,6 +568,7 @@ def main():
     store.load_users()
     store.load_state()
     store.load_visits()
+    lessons.startup()
     reconcile()
     regen_routing()
 
