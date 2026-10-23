@@ -39,7 +39,8 @@ FILES = (
     'nginx-netlab.conf', 'nginx-open.conf', 'lxd-preseed-zfs.yaml',
     'README.md', 'OPERATIONS.md', 'THIRD_PARTY.md',
     'knowledge/corpus.json', 'knowledge/packs.json',
-) + _tree('netlab/*.py', 'templates/*.html', 'assets/*', 'systemd/*')
+    'packctl.py', 'netlab-runner', 'knowledge/v2/catalog.json',
+) + _tree('netlab/*.py', 'templates/*.html', 'assets/*', 'systemd/*', 'pack_format/*.py', 'runner/*.py')
 
 CLI = ('netlab-user', 'netlab-record', 'netlab-backup')
 # 이름이 바뀌어 더는 배포하지 않는 파일. 설치 디렉터리에 남아 있으면 지운다.
@@ -90,8 +91,17 @@ def validate_source():
         p = SOURCE / name
         if not p.is_file() or p.is_symlink():
             raise RuntimeError(f'Missing or symlinked source: {name}')
-    for name in [f for f in FILES if f.endswith('.py')] + ['bootstrap.py', 'deploy.py', 'netlab-record', 'netlab-backup']:
+    for name in [f for f in FILES if f.endswith('.py')] + ['bootstrap.py', 'deploy.py', 'netlab-record', 'netlab-backup',
+                                                         'netlab-runner']:
         compile((SOURCE / name).read_text(), name, 'exec')
+    catalog = json.loads((SOURCE / 'knowledge/v2/catalog.json').read_text())
+    for pack_id, pack in catalog['packs'].items():
+        for item in pack['bundle']['files']:
+            original = SOURCE.parent / item['path']
+            if original.is_file() and hashlib.sha256(original.read_bytes()).hexdigest() != item['sha256']:
+                raise RuntimeError('Learning pack v2 catalog is stale; run python3 server/build_knowledge.py')
+    if any(lesson['pack'] not in catalog['packs'] for lesson in catalog['lessons'].values()):
+        raise RuntimeError('Learning pack v2 catalog is inconsistent; run python3 server/build_knowledge.py')
     corpus = json.loads((SOURCE / 'knowledge/corpus.json').read_text())
     for document in corpus['documents']:
         if hashlib.sha256(document['text'].encode()).hexdigest() != document['sha256']:
