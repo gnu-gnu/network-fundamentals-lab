@@ -2,6 +2,8 @@
 
 처음 사용하는 학습자·설치자는 [Netlab 플랫폼 README](../README.netlab.md)부터 읽는다.
 이 문서는 서버 설치·업데이트·백업의 세부 절차를 다룬다.
+현재 개발 VM의 접속 주소, 소스 전달, 배포, 검증, 롤백은
+개발기 접속 주소·배포 절차는 내부 문서 `server/local/DEVELOPMENT.md`에 둔다. `server/local/`은 Git에 넣지 않으므로 운영자에게 직접 받는다.
 
 LXD VM을 발급하여 브라우저에서 네트워크 실습을 제공하는 서버 소스다.
 기본은 인증 없는 공용 guest 환경이며, 선택적으로 인증 기반 개인별 환경을 제공한다.
@@ -27,9 +29,10 @@ LXD VM을 발급하여 브라우저에서 네트워크 실습을 제공하는 �
 
 | 저장소 | 설치 위치 / 역할 |
 |---|---|
-| `labd.py` | `/opt/netlab-admin/`, 관리 API·인증·UI·VM 수명 관리 |
+| `labd.py`, `netlab/` | `/opt/netlab-admin/`, HTTP 진입점과 설정·상태·VM 수명·nginx·녹화·유지작업 모듈 |
+| `templates/` | `/opt/netlab-admin/templates/`, 사용자 패널·관리자 콘솔 HTML |
 | `netlab-user`, `netlab-record`, `netlab-backup` | `/usr/local/bin/`, 계정·녹화·암호화 백업 CLI |
-| `netlab-tutor.py`, `assets/` | `/opt/netlab-admin/`, 도움말·재생기 |
+| `netlab_tutor.py`, `tutor_chapters.py`, `tutor_chat.py`, `assets/` | `/opt/netlab-admin/`, 도움말·튜터·재생기 |
 | `nginx-netlab.conf` | 비밀값 없는 템플릿; 실제 사이트는 `/etc/nginx/sites-available/netlab` |
 | `systemd/` | labd·VM 격리·Docker/LXD 방화벽 서비스 |
 | `lab-shell.sh`, `lab-session`, `ttyd-lab`, `apply-shell.sh` | 골든 VM 내부에 설치하는 게스트 구성 |

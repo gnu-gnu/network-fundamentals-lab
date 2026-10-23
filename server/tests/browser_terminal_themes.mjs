@@ -42,7 +42,7 @@ if(window===top){
  };
 }
 `});
-await cmd('Page.navigate',{url:process.argv[3]||'http://192.168.219.178:18088/u/guest/ctl/'});
+await cmd('Page.navigate',{url:(process.argv[3]||process.env.NETLAB_URL||(()=>{console.error('usage: node browser_terminal_themes.mjs <panel url>  (or NETLAB_URL)');process.exit(2)})())});
 await wait('document.getElementById("termframe")?.contentWindow.term?.options && typeof netlabTerminal!=="undefined"');
 await wait('document.getElementById("termframe").contentWindow.term.buffer.active.getLine(0).translateToString().includes("session preserved")');
 await ev('window.originalThemeTerminal=document.getElementById("termframe").contentWindow.term;window.originalThemeFrame=document.getElementById("termframe").contentWindow;window.originalThemeSource=document.getElementById("termframe").src');

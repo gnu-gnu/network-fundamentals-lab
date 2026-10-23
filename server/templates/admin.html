@@ -1,0 +1,215 @@
+<!doctype html><meta charset=utf-8><title>실습 환경 — 관리자</title>
+<meta name=viewport content="width=device-width,initial-scale=1">
+<style>
+ :root{--bg:#f6f8fa;--panel:#fff;--panel2:#eef2f6;--ink:#14202e;--ink2:#41556b;--ink3:#6b7f95;
+  --wire:#d2dce5;--sig:#0d6e86;--ok:#15803d;--okbg:#e7f5ec;--crit:#b91c1c;--critbg:#fceceb;
+  --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace}
+ @media(prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#0d1621;--panel:#131f2c;--panel2:#1a2837;
+  --ink:#dbe6f1;--ink2:#a3b6c9;--ink3:#7d92a7;--wire:#2a3b4d;--sig:#3fc4dd;--ok:#4ade80;--okbg:#122a1d;
+  --crit:#f87171;--critbg:#2e1616}}
+ [data-theme=dark]{--bg:#0d1621;--panel:#131f2c;--panel2:#1a2837;--ink:#dbe6f1;--ink2:#a3b6c9;--ink3:#7d92a7;
+  --wire:#2a3b4d;--sig:#3fc4dd;--ok:#4ade80;--okbg:#122a1d;--crit:#f87171;--critbg:#2e1616}
+ *{box-sizing:border-box}
+ body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.6 ui-sans-serif,system-ui,"Noto Sans KR",sans-serif}
+ .wrap{max-width:1000px;margin:0 auto;padding:40px 20px 64px}
+ .eyebrow{font-family:var(--mono);font-size:11.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--sig);margin:0 0 8px}
+ h1{margin:0 0 22px;font-size:25px;letter-spacing:-.02em}
+ h2{font-family:var(--mono);font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);
+  margin:30px 0 12px;padding-bottom:8px;border-bottom:1px solid var(--wire)}
+ .tw{overflow-x:auto;border:1px solid var(--wire);border-radius:10px;background:var(--panel)}
+ table{border-collapse:collapse;width:100%;font-size:14px}
+ th,td{text-align:left;padding:10px 14px;border-bottom:1px solid var(--wire);white-space:nowrap}
+ thead th{font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--ink3);background:var(--panel2)}
+ tbody tr:last-child td{border-bottom:none}
+ td.m{font-family:var(--mono);font-size:12.5px;font-variant-numeric:tabular-nums}
+ .pill{display:inline-block;font-family:var(--mono);font-size:11px;font-weight:600;padding:2px 8px;border-radius:999px}
+ .pill.on{background:var(--okbg);color:var(--ok)} .pill.off{background:var(--panel2);color:var(--ink3)}
+ button{font:inherit;font-size:13px;padding:5px 11px;border-radius:7px;border:1px solid var(--wire);
+  background:var(--panel2);color:var(--ink);cursor:pointer;margin-right:6px}
+ button:hover{border-color:var(--sig);color:var(--sig)}
+ button.danger:hover{border-color:var(--crit);color:var(--crit)}
+ button:focus-visible{outline:2px solid var(--sig);outline-offset:2px}
+ .cfg{background:var(--panel);border:1px solid var(--wire);border-radius:10px;padding:16px 18px;
+  display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+ input{font:inherit;font-family:var(--mono);width:70px;padding:6px 9px;border-radius:7px;
+  border:1px solid var(--wire);background:var(--bg);color:var(--ink)}
+ #out{font-family:var(--mono);font-size:12.5px;background:var(--panel2);border-radius:8px;
+  padding:10px 13px;color:var(--ink2);margin-top:16px;white-space:pre-wrap}
+ .empty{padding:20px;color:var(--ink3);font-size:14px}
+ :root{--warn:#b45309;--warnbg:#fdf1e0}
+ @media(prefers-color-scheme:dark){:root:not([data-theme=light]){--warn:#fbbf24;--warnbg:#2e2312}}
+ [data-theme=dark]{--warn:#fbbf24;--warnbg:#2e2312}
+ .hgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px}
+ .hcard{background:var(--panel);border:1px solid var(--wire);border-radius:10px;padding:12px 14px;
+  border-left:3px solid var(--ok)}
+ .hcard.warn{border-left-color:var(--warn)} .hcard.crit{border-left-color:var(--crit)}
+ .hcard .hl{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--ink3);
+  font-family:var(--mono);letter-spacing:.04em}
+ .hdot{width:8px;height:8px;border-radius:50%;background:var(--ok);flex:none}
+ .hcard.warn .hdot{background:var(--warn)} .hcard.crit .hdot{background:var(--crit)}
+ .hcard .hv{font-size:15px;font-weight:600;margin-top:5px}
+ .hcard.crit .hv{color:var(--crit)} .hcard.warn .hv{color:var(--warn)}
+ .hcard .hd{font-size:12px;color:var(--ink3);margin-top:3px}
+ .hbanner{border-radius:10px;padding:11px 15px;margin:0 0 12px;font-size:14px;font-weight:600;display:none}
+ .hbanner.show{display:block} .hbanner.crit{background:var(--critbg);color:var(--crit)}
+ .hbanner.warn{background:var(--warnbg);color:var(--warn)}
+ .hhead{display:flex;justify-content:space-between;align-items:baseline}
+ .hhead .upd{font-family:var(--mono);font-size:11px;color:var(--ink3)}
+ select{font:inherit;padding:6px 10px;border-radius:7px;border:1px solid var(--wire);background:var(--bg);color:var(--ink)}
+ .notice-admin{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px}
+ @media(max-width:900px){.notice-admin{grid-template-columns:minmax(0,1fr)}}
+ .notice-admin .cfg{flex-direction:column;align-items:stretch;gap:8px}
+ .notice-admin label{font-size:13px;color:var(--ink3)}
+ .notice-admin input,.notice-admin textarea{width:100%;font:inherit;font-size:14px;padding:8px 10px;border-radius:7px;
+  border:1px solid var(--wire);background:var(--bg);color:var(--ink);box-sizing:border-box}
+ .notice-admin textarea{min-height:140px;resize:vertical}
+ .notice-current h3{margin:0;font-size:16px;overflow-wrap:anywhere}
+ .notice-current .nbody{white-space:pre-wrap;overflow-wrap:anywhere;font-size:14px;color:var(--ink2);max-height:160px;overflow:auto}
+ .notice-current .nmeta{font-family:var(--mono);font-size:12px;color:var(--ink3)}
+ .notice-unread{font-size:13px;color:var(--ink3);overflow-wrap:anywhere}
+</style>
+<link rel=stylesheet href="assets/player.css">
+<link rel=stylesheet href="assets/replay.css">
+<div class=wrap>
+  <p class=eyebrow>Network Fundamentals Lab</p>
+  <h1>관리자 콘솔</h1>
+
+  <div class=hhead><h2 style="border:none;margin-bottom:8px">시스템 상태</h2>
+    <span class=upd id=hupd></span></div>
+  <div class="hbanner" id=hbanner></div>
+  <div class=hgrid id=hgrid></div>
+
+  <h2>공지</h2>
+  <div class=notice-admin>
+    <form class=cfg id=noticeform>
+      <label for=noticetitlein>제목</label><input id=noticetitlein maxlength=100 required>
+      <label for=noticebodyin>내용 (게시하면 이전 공지를 대신해 사용자에게 최신 공지만 보입니다)</label>
+      <textarea id=noticebodyin maxlength=5000 required></textarea>
+      <div><button type=submit>게시</button></div>
+    </form>
+    <div class="cfg notice-current" id=noticecurrent>
+      <div class=empty>불러오는 중…</div>
+    </div>
+  </div>
+  <div class=tw style="margin-top:12px"><table>
+    <thead><tr><th>읽은 사람</th><th>읽은 시각</th></tr></thead>
+    <tbody id=noticereaders><tr><td colspan=2 class=empty>—</td></tr></tbody>
+  </table></div>
+  <div class=notice-unread id=noticeunread></div>
+
+  <h2>발급된 환경</h2>
+  <div class=note id=adminpresence role=status aria-live=polite>접속자 연결 중…</div>
+  <div class=tw><table>
+    <thead><tr><th>계정</th><th>상태</th><th>인스턴스</th><th>주소</th><th>발급</th><th>정지 경과</th><th>조치</th></tr></thead>
+    <tbody id=rows><tr><td colspan=7 class=empty>불러오는 중…</td></tr></tbody>
+  </table></div>
+
+  <h2>예비 환경 (웜 풀)</h2>
+  <div class=tw><table>
+    <thead><tr><th>인스턴스</th><th>주소</th><th>준비</th></tr></thead>
+    <tbody id=pool></tbody>
+  </table></div>
+
+  <h2>세션 리플레이</h2>
+  <div id=replay-root></div>
+
+  <h2>정책</h2>
+  <div class=cfg>
+    <label>자동 회수 기간 <input id=days type=number min=0 step=1></label>
+    <span style="color:var(--ink3);font-size:13.5px">일 — 정지된 채 이 기간이 지나면 파기 (0이면 회수 안 함)</span>
+    <label>예비 <input id=pool_size type=number min=0 max=5 step=1></label>
+    <span style="color:var(--ink3);font-size:13.5px">대</span>
+    <button onclick=saveCfg()>저장</button>
+  </div>
+  <div id=out>준비됨</div>
+</div>
+<script>
+const $=i=>document.getElementById(i), out=$('out');
+function ago(iso){ if(!iso) return '—';
+  const d=(Date.now()-new Date(iso).getTime())/86400000;
+  return d<1 ? Math.round(d*24)+'시간' : d.toFixed(1)+'일'; }
+async function load(){
+  const j=await (await fetch('list',{cache:'no-store'})).json();
+  const rows=j.users.map(u=>`<tr>
+    <td class=m><b>${u.user}</b></td>
+    <td><span class="pill ${u.state==='running'?'on':'off'}">${u.state}</span></td>
+    <td class=m>${u.instance||'—'}</td><td class=m>${u.ip||'—'}</td>
+    <td class=m>${(u.created||'').slice(0,10)||'—'}</td>
+    <td class=m>${u.state==='stopped'?ago(u.stopped_at):'—'}</td>
+    <td>${u.state==='running'?`<button onclick="act('stop','${u.user}')">정지</button>`:''}
+        <button class=danger onclick="act('destroy','${u.user}')">회수</button></td></tr>`).join('');
+  $('rows').innerHTML = rows || '<tr><td colspan=7 class=empty>발급된 환경이 없습니다.</td></tr>';
+  $('pool').innerHTML = j.pool.map(p=>`<tr><td class=m>${p.instance}</td><td class=m>${p.ip}</td>
+    <td><span class="pill ${p.ready?'on':'off'}">${p.ready?'준비됨':'준비 중'}</span></td></tr>`).join('')
+    || '<tr><td colspan=3 class=empty>예비 환경이 없습니다.</td></tr>';
+  $('days').value=j.config.reclaim_days; $('pool_size').value=j.config.pool_size;
+}
+async function act(what,user){
+  const msg = what==='destroy' ? `${user} 의 환경을 영구 종료합니다. 작업 내용이 모두 사라지고 되돌릴 수 없습니다.`
+                               : `${user} 의 환경을 정지합니다.`;
+  if(!confirm(msg)) return;
+  out.textContent='처리 중…';
+  const j=await (await fetch(what,{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({user})})).json();
+  out.textContent=(j.ok?'완료: ':'실패: ')+j.message; load();
+}
+async function saveCfg(){
+  out.textContent='저장 중…';
+  const j=await (await fetch('config',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({reclaim_days:+$('days').value, pool_size:+$('pool_size').value})})).json();
+  out.textContent=(j.ok?'저장했습니다.':'실패: '+j.message); load();
+}
+async function health(){
+  try{
+    const j=await (await fetch('health',{cache:'no-store'})).json();
+    const items=j.items||[];
+    $('hgrid').innerHTML=items.map(h=>`<div class="hcard ${h.level}">
+      <div class=hl><span class=hdot></span>${h.label}</div>
+      <div class=hv>${h.value}</div>
+      ${h.detail?`<div class=hd>${h.detail}</div>`:''}</div>`).join('');
+    const crit=items.filter(h=>h.level==='crit'), warn=items.filter(h=>h.level==='warn');
+    const b=$('hbanner');
+    if(crit.length){ b.className='hbanner show crit';
+      b.textContent='주의가 필요합니다: '+crit.map(h=>h.label).join(', '); }
+    else if(warn.length){ b.className='hbanner show warn';
+      b.textContent='확인 권장: '+warn.map(h=>h.label).join(', '); }
+    else b.className='hbanner';
+    const d=new Date(); $('hupd').textContent='갱신 '+d.toTimeString().slice(0,8);
+  }catch(e){ $('hgrid').innerHTML='<div class="hcard crit"><div class=hv>상태 조회 실패</div></div>'; }
+}
+const stamp=t=>{const d=new Date(t*1000),p=x=>String(x).padStart(2,'0');return (d.getMonth()+1)+'/'+d.getDate()+' '+p(d.getHours())+':'+p(d.getMinutes());};
+function cell(text,cls){const td=document.createElement('td');if(cls)td.className=cls;td.textContent=text;return td;}
+function renderNotice(j){
+  const box=$('noticecurrent'),tbody=$('noticereaders');box.replaceChildren();tbody.replaceChildren();
+  if(!j.notice){const e=document.createElement('div');e.className='empty';e.textContent='게시된 공지가 없습니다.';box.append(e);
+    const tr=document.createElement('tr');tr.append(cell('—','empty'));tr.firstChild.colSpan=2;tbody.append(tr);$('noticeunread').textContent='';return;}
+  const h=document.createElement('h3'),m=document.createElement('div'),b=document.createElement('div');
+  h.textContent=j.notice.title;m.className='nmeta';m.textContent='현재 공지 · '+stamp(j.notice.created)+' 게시 · 읽음 '+j.readers.length+'명';
+  b.className='nbody';b.textContent=j.notice.body;box.append(h,m,b);
+  for(const r of j.readers){const tr=document.createElement('tr');tr.append(cell(r.reader,'m'),cell(stamp(r.read_at),'m'));tbody.append(tr);}
+  if(!j.readers.length){const tr=document.createElement('tr');tr.append(cell('아직 읽은 사람이 없습니다.','empty'));tr.firstChild.colSpan=2;tbody.append(tr);}
+  $('noticeunread').textContent=j.unread.length?'안 읽은 계정 '+j.unread.length+'명: '+j.unread.join(', '):'';
+}
+async function loadNotice(){
+  try{const j=await (await fetch('notice',{cache:'no-store'})).json();if(j.ok)renderNotice(j);}
+  catch(e){$('noticecurrent').textContent='공지 조회 실패';}
+}
+$('noticeform').onsubmit=async e=>{
+  e.preventDefault();
+  if(!confirm('새 공지를 게시합니다. 사용자에게는 이 공지만 보이고 읽음 표시는 새로 시작됩니다.')) return;
+  out.textContent='공지 게시 중…';
+  const j=await (await fetch('notice',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({title:$('noticetitlein').value,body:$('noticebodyin').value})})).json();
+  out.textContent=j.ok?'공지를 게시했습니다.':'실패: '+j.message;
+  if(j.ok){$('noticeform').reset();renderNotice(j);}
+};
+load(); setInterval(load,15000);
+health(); setInterval(health,20000);
+loadNotice(); setInterval(loadNotice,30000);
+</script>
+<script>window.LAB_REPLAY={admin:true};</script>
+<script src="assets/community-transport.js"></script>
+<script src="assets/community-presence.js"></script>
+<script src="assets/player.js"></script>
+<script src="assets/replay.js"></script>

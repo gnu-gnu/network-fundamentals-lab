@@ -10,7 +10,7 @@ function cmd(method,params={}){return new Promise(r=>{const n=++id;calls.set(n,r
 async function ev(expression){const r=await cmd('Runtime.evaluate',{expression,returnByValue:true,awaitPromise:true});assert(!r.result.exceptionDetails,JSON.stringify(r));return r.result.result.value;}
 async function wait(expression){for(let n=0;n<100;n++){if(await ev(expression))return;await new Promise(r=>setTimeout(r,30));}throw Error('Timed out: '+expression);}
 await cmd('Runtime.enable');await cmd('Page.enable');
-await cmd('Page.navigate',{url:process.argv[2]||'http://192.168.219.178:18088/u/guest/ctl/'});
+await cmd('Page.navigate',{url:(process.argv[2]||process.env.NETLAB_URL||(()=>{console.error('usage: node browser_tutor_motion.mjs <panel url>  (or NETLAB_URL)');process.exit(2)})())});
 await wait('typeof tutorSend==="function"');
 // Exercise the UI even when the test VM is idle/stopped; never start a VM.
 await ev('refresh().then(()=>document.getElementById("running").classList.remove("hide"))');

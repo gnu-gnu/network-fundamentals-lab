@@ -1,7 +1,11 @@
 import importlib.util
 from pathlib import Path
+import sys
 import unittest
 from unittest.mock import patch
+
+sys.path.insert(0, str(Path(__file__).parents[1]))
+from netlab import nginx, paths, store  # noqa: E402
 
 
 class OpenModeTests(unittest.TestCase):
@@ -9,10 +13,13 @@ class OpenModeTests(unittest.TestCase):
         spec = importlib.util.spec_from_file_location('labd_open_test', Path(__file__).parents[1] / 'labd.py')
         self.labd = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(self.labd)
-        self.labd.USERS = {'alice': {'role': 'user'}}
+        # store 는 프로세스 전역이므로 테스트마다 초기화한다.
+        store.USERS.clear(); store.USERS.update({'alice': {'role': 'user'}})
+        store.CONFIG.clear(); store.CONFIG.update(store.DEFAULTS)
+        store.STATE.clear(); store.STATE.update({'users': {}, 'pool': []})
 
     def test_legacy_default_stays_protected(self):
-        with patch.object(self.labd.os, 'listdir', return_value=[]):
+        with patch.object(store.os, 'listdir', return_value=[]):
             self.assertNotIn('guest', self.labd.accounts())
 
     def test_shared_vm_notice_only_for_guest(self):
@@ -21,6 +28,13 @@ class OpenModeTests(unittest.TestCase):
         self.assertIn('실습 VM이 다른 방문자와 공유됩니다', guest)
         self.assertNotIn('실습 VM이 다른 방문자와 공유됩니다', named)
         self.assertIn('질문과 실험 결과를 함께 살펴봅니다.', named)
+
+    def test_panel_template_has_no_unrendered_placeholders(self):
+        panel = self.labd.render_panel('alice')
+        self.assertNotIn('__USER__', panel)
+        self.assertNotIn('__TUTOR_SHARED_NOTICE__', panel)
+        self.assertIn('<title>alice — 실습 환경</title>', panel)
+        self.assertNotIn('{{', panel)
 
     def test_theme_toggle_is_accessible_and_initialized_before_styles(self):
         panel = self.labd.render_panel('alice')
@@ -36,17 +50,16 @@ class OpenModeTests(unittest.TestCase):
         self.assertLess(panel.index('assets/terminal-theme.js'), panel.index('id=termframe'))
 
     def test_open_routes_only_shared_guest_and_strip_admin_header(self):
-        labd = self.labd
-        labd.CONFIG['auth_mode'] = 'open'
-        labd.STATE = {'users': {'guest': {'status': 'running', 'ip': '10.210.0.20'}}, 'pool': []}
+        store.CONFIG['auth_mode'] = 'open'
+        store.STATE['users'] = {'guest': {'status': 'running', 'ip': '10.210.0.20'}}
         writes = {}
-        with patch.object(labd.os, 'listdir', return_value=[]), \
-                patch.object(labd, 'write_atomic', side_effect=lambda p, text, mode: writes.update({p: text})), \
-                patch.object(labd.shutil, 'chown'), patch.object(labd.subprocess, 'run') as run, \
-                patch.object(labd.time, 'sleep'):
+        with patch.object(store.os, 'listdir', return_value=[]), \
+                patch.object(nginx, 'write_atomic', side_effect=lambda p, text, mode: writes.update({p: text})), \
+                patch.object(nginx.shutil, 'chown'), patch.object(nginx.subprocess, 'run') as run, \
+                patch.object(nginx.time, 'sleep'):
             run.return_value.returncode = 0
-            self.assertTrue(labd.regen_routing())
-        routes = writes[labd.NGINX_LAN]
+            self.assertTrue(self.labd.regen_routing())
+        routes = writes[paths.NGINX_LAN]
         self.assertIn('/u/guest/ctl/', routes)
         self.assertIn('http://10.210.0.20:7681/', routes)
         self.assertNotIn('/u/alice/', routes)

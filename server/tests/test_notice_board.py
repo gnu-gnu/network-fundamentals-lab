@@ -10,6 +10,7 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parents[1]))
+from netlab import store  # noqa: E402
 import notice_board as board
 
 
@@ -95,8 +96,8 @@ class NoticeHTTPTests(unittest.TestCase):
         spec = importlib.util.spec_from_file_location('notice_labd_test', Path(__file__).parents[1] / 'labd.py')
         self.labd = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(self.labd)
-        self.labd.PROXY_SECRET = 'fixture-proxy-secret'
-        self.labd.USERS = {'alice': {}, 'bob': {}, 'carol': {'role': 'admin'}}
+        store.PROXY_SECRET = 'fixture-proxy-secret'
+        store.USERS.clear(); store.USERS.update({'alice': {}, 'bob': {}, 'carol': {'role': 'admin'}})
         self.server = ThreadingHTTPServer(('127.0.0.1', 0), self.labd.Handler)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()

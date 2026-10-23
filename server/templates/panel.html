@@ -1,0 +1,294 @@
+<!doctype html><meta charset=utf-8><title>__USER__ — 실습 환경</title>
+<meta name=viewport content="width=device-width,initial-scale=1">
+<script src="assets/theme.js"></script>
+<script src="assets/terminal-theme.js"></script>
+<style>
+ :root{color-scheme:light;--bg:#f6f8fa;--panel:#fff;--panel2:#eef2f6;--ink:#14202e;--ink2:#41556b;--ink3:#6b7f95;
+  --wire:#d2dce5;--sig:#0d6e86;--sigbg:#e2f1f5;--ok:#15803d;--okbg:#e7f5ec;--warn:#b45309;--crit:#b91c1c;--critbg:#fceceb;
+  --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace}
+ @media(prefers-color-scheme:dark){:root:not([data-theme=light]){color-scheme:dark;--bg:#0d1621;--panel:#131f2c;--panel2:#1a2837;
+  --ink:#dbe6f1;--ink2:#a3b6c9;--ink3:#7d92a7;--wire:#2a3b4d;--sig:#3fc4dd;--sigbg:#12313a;
+  --ok:#4ade80;--okbg:#122a1d;--warn:#fbbf24;--crit:#f87171;--critbg:#2e1616}}
+ [data-theme=dark]{color-scheme:dark;--bg:#0d1621;--panel:#131f2c;--panel2:#1a2837;--ink:#dbe6f1;--ink2:#a3b6c9;--ink3:#7d92a7;
+  --wire:#2a3b4d;--sig:#3fc4dd;--sigbg:#12313a;--ok:#4ade80;--okbg:#122a1d;--warn:#fbbf24;--crit:#f87171;--critbg:#2e1616}
+ *{box-sizing:border-box}
+ body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.6 ui-sans-serif,system-ui,"Noto Sans KR",sans-serif}
+ .wrap{max-width:1240px;margin:0 auto;padding:36px 20px 64px}
+ .panel-header{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:18px}
+ .panel-header>div{min-width:0}
+ .panel-header h1{overflow-wrap:anywhere}
+ .theme-toggle{display:inline-flex;align-items:center;gap:7px;flex-shrink:0;margin-top:2px}
+ #themeicon{font-size:19px;line-height:1}
+ @media(max-width:480px){.panel-header h1{font-size:22px}.theme-toggle{padding:8px 10px;font-size:13px}}
+ /* 상단 컨트롤 스트립: 상태·시작·정지·초기화·종료를 가로로 */
+ .controlbar{display:flex;gap:12px;flex-wrap:wrap;align-items:stretch;margin-bottom:18px}
+ .ctl{background:var(--panel);border:1px solid var(--wire);border-radius:11px;
+  padding:12px 16px;display:flex;align-items:center;gap:12px}
+ .ctl.grow{flex:1 1 260px}
+ .ctl .t{white-space:nowrap}
+ .ctl button{white-space:nowrap}
+ .controlbar button{display:inline-flex;align-items:center;gap:6px}
+ .controlbar button svg{width:15px;height:15px;flex:none}
+ .eyebrow{font-family:var(--mono);font-size:11.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--sig);margin:0 0 8px}
+ h1{margin:0 0 4px;font-size:26px;letter-spacing:-.02em}
+ .sub{color:var(--ink3);font-size:14px;margin:0 0 26px}
+ .card{background:var(--panel);border:1px solid var(--wire);border-radius:11px;padding:18px 20px;margin-bottom:14px}
+ .row{display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap}
+ .t{font-weight:640} .d{color:var(--ink3);font-size:13.5px;margin-top:2px}
+ button{font:inherit;font-size:14.5px;padding:9px 16px;border-radius:8px;border:1px solid var(--wire);
+  background:var(--panel2);color:var(--ink);cursor:pointer;white-space:nowrap}
+ button:hover:not(:disabled){border-color:var(--sig);color:var(--sig)}
+ button:disabled{opacity:.45;cursor:not-allowed}
+ button.primary{background:var(--sig);border-color:var(--sig);color:var(--panel);font-weight:600}
+ button.primary:hover:not(:disabled){opacity:.88;color:var(--panel)}
+ button.danger{color:var(--crit);border-color:var(--crit)}
+ button:focus-visible{outline:2px solid var(--sig);outline-offset:2px}
+ a.term{display:block;text-align:center;padding:14px;border-radius:9px;background:var(--sig);
+  color:var(--panel);text-decoration:none;font-weight:640;font-size:16px}
+ a.term:hover{opacity:.9}
+ .state{display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:13.5px}
+ .dot{width:9px;height:9px;border-radius:50%;flex:none}
+ .meta{font-family:var(--mono);font-size:12px;color:var(--ink3);margin-top:10px;
+  display:flex;flex-wrap:wrap;gap:4px 16px}
+ #out{font-family:var(--mono);font-size:13px;background:var(--panel2);border-radius:8px;
+  padding:11px 13px;color:var(--ink2);white-space:pre-wrap;margin-top:14px}
+ #helpout{margin-top:12px;background:var(--sigbg);border-radius:8px;padding:12px 14px;
+  font-size:14px;line-height:1.6;color:var(--ink)}
+ .helptag{display:inline-block;font-size:12px;color:var(--sig);font-weight:600;margin-bottom:6px}
+ .helpadvice{white-space:pre-wrap}
+ /* 터미널 임베드 + 옆 도움말. 터미널은 고정 크기(녹화·리플레이 일관성). */
+ .workspace{display:flex;gap:14px;flex-wrap:wrap;align-items:flex-start;margin-bottom:16px}
+ .termbox{flex:0 0 auto;width:860px;max-width:100%;border:1px solid var(--wire);
+  border-radius:10px;overflow:hidden;background:#0d1621}
+ .termhead{display:flex;justify-content:space-between;align-items:center;
+  padding:6px 12px;background:var(--panel2);font-size:12px;color:var(--ink3)}
+ .termhead a{color:var(--sig);text-decoration:none;cursor:pointer}
+ .termhead{flex-wrap:wrap;gap:8px}
+ .termtools{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+ .terminal-theme{display:inline-flex;align-items:center;gap:6px}
+ #terminaltheme{font:inherit;color:var(--ink);background:var(--panel);border:1px solid var(--wire);border-radius:6px;padding:4px 6px;max-width:min(210px,52vw)}
+ #terminaltheme:focus-visible{outline:2px solid var(--sig);outline-offset:2px}
+ #termframe{width:860px;height:500px;max-width:100%;border:0;display:block}
+ .helpside{flex:1 1 320px;min-width:300px;background:var(--panel);
+  border:1px solid var(--wire);border-radius:10px;padding:16px 18px}
+ .helpbtn{width:100%;margin-top:10px}
+ @media(max-width:920px){ .termbox,#termframe{width:100%} }
+ .hide{display:none}
+ .note{border-left:3px solid var(--sig);background:var(--sigbg);padding:11px 14px;
+  border-radius:0 7px 7px 0;font-size:13.5px;color:var(--ink2);margin-top:14px}
+ .spin{display:inline-block;width:13px;height:13px;border:2px solid var(--wire);
+  border-top-color:var(--sig);border-radius:50%;animation:sp .8s linear infinite;vertical-align:-2px}
+ @keyframes sp{to{transform:rotate(360deg)}}
+ @media(prefers-reduced-motion:reduce){.spin{animation:none}}
+</style>
+<link rel=stylesheet href="assets/player.css">
+<link rel=stylesheet href="assets/replay.css">
+<link rel=stylesheet href="assets/tutor.css">
+<link rel=stylesheet href="assets/community.css">
+<link rel=stylesheet href="assets/notice.css">
+<div class=wrap>
+  <header class=panel-header><div>
+  <p class=eyebrow>Network Fundamentals Lab</p>
+  <h1>__USER__ 님의 실습 환경</h1>
+  </div><div class=header-actions>
+    <button type=button id=noticelauncher class=notice-launcher aria-controls=noticepanel aria-expanded=false aria-label="공지 열기">공지<span id=noticebadge class=notice-badge hidden>새 공지</span></button>
+    <button type=button id=themetoggle class=theme-toggle aria-label="다크 테마" aria-pressed=false title="테마 전환"><span id=themeicon aria-hidden=true>☀</span><span id=themelabel>라이트</span></button>
+    <section id=noticepanel class=notice-panel role=dialog aria-modal=false aria-labelledby=noticeheading hidden>
+      <div class=notice-heading><span class=eyebrow id=noticeheading>공지</span><button type=button id=noticeclose aria-label="공지 닫기">닫기 ×</button></div>
+      <h2 id=noticetitle class=notice-title></h2>
+      <div id=noticemeta class=d></div>
+      <div id=noticebody class=notice-body></div>
+      <div id=noticestate class=notice-state role=status aria-live=polite></div>
+    </section>
+  </div></header>
+
+  <div class=controlbar>
+    <div class="ctl grow">
+      <div><div class=t>상태</div><div class=state id=state><span class=spin></span> 확인 중</div>
+        <div class=meta id=meta></div></div>
+      <button onclick=refresh() id=brefresh style="margin-left:auto"><svg viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=2 stroke-linecap=round stroke-linejoin=round><path d="M21 12a9 9 0 1 1-2.6-6.4L21 8"/><path d="M21 3v5h-5"/></svg>새로고침</button>
+    </div>
+    <div id=none class="ctl hide">
+      <div class=t>환경 없음</div>
+      <button class=primary onclick="act('start')">시작</button>
+    </div>
+    <div id=stopped class="ctl hide">
+      <div class=t>정지됨</div>
+      <button class=primary onclick="act('start')">다시 시작</button>
+    </div>
+    <div id=runctrl class="ctl hide">
+      <button onclick="act('stop','환경을 일시 정지합니다. 작업 내용은 남고 다시 시작하면 이어집니다.')"><svg viewBox="0 0 24 24" fill="currentColor"><rect x="7" y="5" width="3.6" height="14" rx="1"></rect><rect x="13.4" y="5" width="3.6" height="14" rx="1"></rect></svg>일시 정지</button>
+      <button class=danger onclick="act('restore','정말 초기화할까요? 저장하지 않은 작업은 모두 사라집니다.')"><svg viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=2 stroke-linecap=round stroke-linejoin=round><path d="M3 12a9 9 0 1 0 2.6-6.4L3 8"/><path d="M3 3v5h5"/></svg>초기화</button>
+    </div>
+    <div id=give class="ctl hide">
+      <button class=danger onclick="act('destroy','환경을 영구 종료합니다. 작업 내용이 모두 사라지고 되돌릴 수 없습니다. 진행할까요?')"><svg viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=2 stroke-linecap=round stroke-linejoin=round><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M6 6l1 14h10l1-14"/></svg>영구 종료</button>
+    </div>
+  </div>
+
+  <div id=running class=hide>
+    <div class=workspace>
+      <div class=termbox>
+        <div class=termhead>
+          <span>실습 터미널</span>
+          <div class=termtools><label class=terminal-theme for=terminaltheme>테마 <select id=terminaltheme>
+            <option value=current>기본 · Slate</option>
+            <option value=solarized-dark>Solarized Dark</option>
+            <option value=solarized-light>Solarized Light (White)</option>
+            <option value=ubuntu>Ubuntu · Aubergine</option>
+          </select></label><span id=terminalthemestatus role=status aria-live=polite></span><a id=termfull target=_blank rel=noopener>전체화면 ⤢</a></div>
+        </div>
+        <iframe id=termframe title="실습 터미널"></iframe>
+      </div>
+      <div class=helpside id=tutorpanel hidden role=region aria-label="AI 실습 튜터">
+        <div class=tutor-heading><div class=t>AI 실습 튜터</div><button type=button id=tutorclose aria-label="튜터 닫기">닫기 ×</button></div>
+        <button type=button id=tutormodel aria-haspopup=dialog>모델 선택</button>
+        <dialog id=tutormodeldialog aria-labelledby=tutormodeltitle>
+          <form method=dialog><div class=tutor-heading><h2 id=tutormodeltitle>튜터 모델 선택</h2><button aria-label="모델 선택 닫기">닫기 ×</button></div></form>
+          <p class=d>다음 질문부터 선택한 모델이 답합니다. 대화와 실습 맥락은 유지됩니다.</p>
+          <div id=tutormodeloptions></div>
+        </dialog>
+        <div id=tutorcontext class=d>실습 상태는 질문 또는 상태 확인 시 조회합니다.</div>
+        <select id=tutorconversations aria-label="이 브라우저의 이전 대화" onchange="tutorSelect(this.value)"><option value="">새 대화</option></select>
+        <div class=d>질문과 실험 결과를 함께 살펴봅니다.__TUTOR_SHARED_NOTICE__</div>
+        <div id=tutorlog style="max-height:440px;overflow:auto;white-space:pre-wrap"></div>
+        <div class=tutor-compose>
+          <textarea id=tutorinput rows=3 maxlength=6000 aria-label="AI 튜터 질문" aria-describedby=tutorinputhint placeholder="질문이나 관찰한 결과를 적어 주세요"></textarea>
+          <button type=button id=tutorsend onclick="tutorSend()">보내기</button>
+        </div>
+        <div id=tutorinputhint class=d>Enter 전송 · Shift+Enter 줄바꿈</div>
+        <label class="d tutor-share"><input type=checkbox id=tutorshare> 최근 명령·화면 함께 전달<br>비밀번호 등이 포함됐는지 확인하세요.</label>
+        <div class=tutor-actions>
+        <button onclick="tutorSend('현재 상태를 확인하고 앞선 관찰과 비교해서 설명해 줘.',true)">능동 진단 · 패킷 발생</button>
+        <button onclick="tutorSend('이 실습의 목표와 첫 관찰 방법을 설명해 줘.')">실습 목표</button>
+        <button onclick="tutorSend('다음 단계 힌트를 줘.',false,'hint')">다음 힌트</button>
+        <button onclick="tutorSend('수정 명령과 이유를 설명해 줘.',false,'solution')">수정 명령 보기</button>
+        <button onclick="tutorSend(null,false,'reflection')">내 설명 피드백</button>
+        <button onclick="tutorNew()">새 대화</button>
+        </div>
+        <div id=tutorstatus class=d role=status aria-live=polite></div>
+      </div>
+    </div>
+    <button type=button id=tutorlauncher class=tutor-launcher aria-controls=tutorpanel aria-expanded=false aria-label="AI 튜터 열기"><span aria-hidden=true>✦</span> AI 튜터</button>
+  </div>
+
+  <section id=communitypanel class=community-panel hidden aria-label="접속자 채팅">
+    <div class=community-heading><div class=t>함께 실습하는 사람들</div><button type=button id=communityclose aria-label="채팅 닫기">닫기 ×</button></div>
+    <div class=d>전체 채팅방 · 최근 메시지 100개 보관 · 로그인 계정명 공개</div>
+    <div id=communityonline class=d></div>
+    <div id=communitymessages class=community-messages aria-label="채팅 메시지"></div>
+    <form id=communityform>
+      <label class=d for=communityinput>메시지 (Enter 전송 · Shift+Enter 줄바꿈)</label>
+      <div class=community-compose><textarea id=communityinput rows=2 maxlength=1000 placeholder="질문이나 발견한 내용을 나눠 보세요"></textarea><button type=submit id=communitysend>전송</button></div>
+    </form>
+    <div id=communitystatus class=d role=status aria-live=polite></div>
+  </section>
+  <button type=button id=communitylauncher class=community-launcher aria-controls=communitypanel aria-expanded=false aria-label="접속자 채팅 열기"><span aria-hidden=true>💬</span> 채팅 <span id=communitybadge hidden></span></button>
+
+  <div class=card>
+    <div class=t style="margin-bottom:4px">내 세션 복습</div>
+    <div class=d style="margin-bottom:10px">직접 했던 실습을 다시 볼 수 있어요. 세션을 고르면 크게 재생됩니다.</div>
+    <div id=replay-root></div>
+  </div>
+
+  <div class=note id=policy></div>
+  <div id=out>준비됨</div>
+</div>
+<script>
+const $=i=>document.getElementById(i), out=$('out');
+let busy=false;
+function show(id,on){ $(id).classList.toggle('hide',!on); }
+async function refresh(){
+  try{
+    const j=await (await fetch('status',{cache:'no-store'})).json();
+    const s=j.state||'none';
+    const c={running:'var(--ok)',stopped:'var(--ink3)',none:'var(--ink3)'}[s]||'var(--warn)';
+    const label={none:'환경 없음',running:'실행 중',stopped:'정지됨',
+      provisioning:'발급 중',starting:'시작 중',stopping:'정지 중',
+      restoring:'초기화 중',error:'오류'}[s]||s;
+    const pend=['provisioning','starting','stopping','restoring'].includes(s);
+    $('state').innerHTML=(pend?'<span class=spin></span> ':
+      '<span class=dot style="background:'+c+'"></span>')+label;
+    $('meta').innerHTML = j.instance
+      ? ['인스턴스 '+j.instance, j.ip?('주소 '+j.ip):'', j.created?('발급 '+j.created.slice(0,10)):'']
+          .filter(Boolean).map(x=>'<span>'+x+'</span>').join('')
+      : '';
+    show('none', s==='none'); show('stopped', s==='stopped');
+    show('running', s==='running'); show('runctrl', s==='running');
+    show('give', s==='running'||s==='stopped');
+    mountTerm(s==='running');
+    $('policy').textContent = j.policy||'';
+    if(pend) setTimeout(refresh,3000);
+  }catch(e){ $('state').textContent='확인 실패'; }
+}
+// 터미널은 실행 중일 때만 임베드한다(정지 상태에서 세션을 새로 만들지 않도록).
+function termUrl(){ const base=ctlBase().replace(/ctl\/$/,'term/');return window.netlabTerminal?window.netlabTerminal.url(base):base; }
+function mountTerm(on){
+  const f=$('termframe'), a=$('termfull');
+  if(on){
+    if(!f.src){ const u=termUrl(); f.src=u; a.href=u; }
+  }else if(f.src){ f.removeAttribute('src'); }
+}
+async function act(what,msg){
+  if(msg&&!confirm(msg)) return;
+  if(busy) return; busy=true;
+  document.querySelectorAll('button').forEach(b=>b.disabled=true);
+  out.textContent='처리 중…';
+  try{
+    const j=await (await fetch(what,{method:'POST'})).json();
+    out.textContent=(j.ok?'완료: ':'실패: ')+j.message;
+  }catch(e){ out.textContent='실패: '+e; }
+  busy=false;
+  document.querySelectorAll('button').forEach(b=>b.disabled=false);
+  refresh();
+}
+let helpAsked=0;
+// help 는 절대경로로 못박는다. 상대 fetch 는 URL 에 트레일링 슬래시가 없으면
+// /u/<user>/help 로 잘못 나가고, 그걸 Cloudflare Access 가 로그인으로 리다이렉트하면
+// 브라우저가 CORS 로 "Failed to fetch" 를 던진다.
+function ctlBase(){
+  let p=location.pathname;
+  const i=p.indexOf('/ctl');
+  if(i>=0) return p.slice(0,i+4)+'/';   // .../ctl/
+  return p.endsWith('/')?p:p+'/';
+}
+async function askHelp(){
+  const btn=$('helpbtn'), o=$('helpout');
+  btn.disabled=true; const label=btn.textContent;
+  btn.textContent='살펴보는 중…';
+  o.classList.remove('hide');
+  o.innerHTML='<span class=spin></span> 지금 화면 상태를 읽고 조언을 만들고 있어요… (십여 초 걸릴 수 있어요)';
+  const ctrl=new AbortController();
+  const timer=setTimeout(()=>ctrl.abort(),120000);
+  try{
+    const r=await fetch(ctlBase()+'help',{method:'POST',signal:ctrl.signal});
+    if(!r.ok){ o.textContent='도움말을 준비하지 못했어요 (HTTP '+r.status+'). 잠시 후 다시 눌러주세요.'; }
+    else{
+      const j=await r.json();
+      if(!j.ok){ o.textContent=j.message||'도움말을 준비하지 못했어요.'; }
+      else{
+        helpAsked++;
+        const tag = j.passed ? '<b>이미 통과했어요 🎉</b><br>'
+                   : '<span class=helptag>'+j.title+' · '+j.attempt+'번째 힌트</span>';
+        o.innerHTML = tag + '<div class=helpadvice>'+
+          j.advice.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/\n/g,'<br>')+'</div>';
+        if(!j.passed) btn.textContent='아직 막혀요 · 더 구체적으로';
+      }
+    }
+  }catch(e){
+    o.textContent = (e.name==='AbortError')
+      ? '응답이 너무 오래 걸려요. 잠시 후 다시 시도해 주세요.'
+      : '연결에 실패했어요. 페이지를 새로고침한 뒤 다시 눌러주세요.';
+  }
+  clearTimeout(timer);
+  if(btn.textContent==='살펴보는 중…') btn.textContent=label;
+  btn.disabled=false;
+}
+refresh(); setInterval(()=>{if(!busy)refresh();},10000);
+</script>
+<script>window.LAB_REPLAY={admin:false};</script>
+<script src="assets/player.js"></script>
+<script src="assets/replay.js"></script>
+<script src="assets/tutor.js"></script>
+<script src="assets/community-transport.js"></script>
+<script src="assets/community.js"></script>
+<script src="assets/notice.js"></script>

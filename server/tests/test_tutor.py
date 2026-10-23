@@ -1,4 +1,3 @@
-import importlib.util
 import io
 import json
 from pathlib import Path
@@ -7,9 +6,7 @@ import sys
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parents[1]))
-spec = importlib.util.spec_from_file_location('tutor_test', Path(__file__).parents[1] / 'netlab-tutor.py')
-tutor = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(tutor)
+import netlab_tutor as tutor  # noqa: E402
 
 
 class TutorTests(unittest.TestCase):

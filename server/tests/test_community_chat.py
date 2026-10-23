@@ -10,6 +10,7 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parents[1]))
+from netlab import store  # noqa: E402
 import community_chat as chat
 
 
@@ -87,8 +88,8 @@ class CommunityHTTPTests(unittest.TestCase):
         spec = importlib.util.spec_from_file_location('community_labd_test', Path(__file__).parents[1] / 'labd.py')
         self.labd = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(self.labd)
-        self.labd.PROXY_SECRET = 'fixture-proxy-secret'
-        self.labd.USERS = {'alice': {}, 'bob': {}}
+        store.PROXY_SECRET = 'fixture-proxy-secret'
+        store.USERS.clear(); store.USERS.update({'alice': {}, 'bob': {}})
         self.server = ThreadingHTTPServer(('127.0.0.1', 0), self.labd.Handler)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
@@ -126,7 +127,7 @@ class CommunityHTTPTests(unittest.TestCase):
                                       **{'Sec-Fetch-Site': 'same-origin'})[0], 200)
 
     def test_chat_does_not_require_a_running_vm(self):
-        self.labd.STATE = {'users': {}, 'pool': []}
+        store.STATE.clear(); store.STATE.update({'users': {}, 'pool': []})
         self.assertEqual(self.request()[0], 200)
 
     def test_socket_grant_uses_authenticated_identity_and_same_origin(self):

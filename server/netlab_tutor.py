@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-netlab-tutor — 실습 진도 검증(check) + 실시간 도움(help).
+netlab_tutor — 실습 진도 검증(check) + 실시간 도움(help).
 
 호스트에서만 돈다. VM 안 상태는 `lxc exec`(LXD 제어 채널)로 조회한다.
 VM→호스트는 방화벽으로 막혀 있으므로 학습자는 이 로직·LLM 키에 접근할 수 없다.
@@ -10,9 +10,9 @@ VM→호스트는 방화벽으로 막혀 있으므로 학습자는 이 로직·L
   gather(inst, ch) → 지금 상태 스냅샷 (help 의 재료, 비파괴)
   help(inst, ch, n)→ 상태 + 단계식 톤으로 LLM 조언 (n = 도움 요청 횟수)
 
-CLI:  netlab-tutor check <instance> <chapter>
-      netlab-tutor gather <instance> <chapter>
-      netlab-tutor help  <instance> <chapter> [--attempt N]
+CLI:  python3 netlab_tutor.py check <instance> <chapter>
+      python3 netlab_tutor.py gather <instance> <chapter>
+      python3 netlab_tutor.py help  <instance> <chapter> [--attempt N]
 """
 import argparse
 import json
@@ -20,102 +20,12 @@ import re
 import subprocess
 import sys
 import urllib.request
+from netlab.paths import TUTOR_CONFIG_PATH as TUTOR_CFG
 from tutor_chapters import EXTRA, CONCEPTS
 
-TUTOR_CFG = "/etc/netlab/tutor.json"
+# 챕터 메타데이터(CHAPTERS)는 tutor_chapters.py 한 곳에서만 정의한다.
+CHAPTERS = dict(EXTRA)
 
-# ── 챕터 메타데이터 ───────────────────────────────────────────────
-# 각 챕터:
-#   prefix   : clab 노드 이름 접두사 (배포 감지·명령에 씀)
-#   title    : 사람용 이름
-#   fault    : 심어진 고장 (LLM 맥락용, 학습자에겐 직접 안 보임)
-#   goal     : 성공조건을 사람 말로
-#   success  : (node, argv, needle) — node 안에서 argv 실행, 출력에 needle 있으면 통과
-#   probes   : help 가 모을 비파괴 진단들 [(라벨, node, argv)]  node=None 이면 VM 셸에서
-#   hints    : 단계식 힌트. 도움 요청이 늘수록 뒤 항목까지 LLM 에 준다(점점 구체적).
-CHAPTERS = {
-    "01": {
-        "prefix": "clab-01-l2-arp",
-        "title": "01장 L2 인접성 & ARP",
-        "observational": True,   # 고칠 고장이 없는 관찰 실습
-        "fault": "이 챕터엔 심어둔 고장이 없다. 같은 L2 세그먼트에서 ARP 로 서로를 찾고, "
-                 "다른 서브넷은 라우터가 없어 의도적으로 unreachable 인 것을 관찰하는 실습이다.",
-        "goal": "ARP 로 MAC 을 학습하는 과정과, 라우터 없이 다른 서브넷이 왜 안 되는지를 관찰한다.",
-        "probes": [
-            ("h1 ARP 테이블", "h1", ["ip", "neigh"]),
-            ("h1 실습 주소(관리망 제외)", "h1", ["ip", "-br", "addr", "show", "dev", "eth1"]),
-            ("h2 실습 주소와 MAC", "h2", ["ip", "addr", "show", "dev", "eth1"]),
-            ("h3 실습 주소와 MAC", "h3", ["ip", "addr", "show", "dev", "eth1"]),
-            ("sw 브리지 MAC", "sw", ["bash", "-c", "bridge fdb show 2>/dev/null | grep -v permanent | head"]),
-        ],
-        "hints": [
-            "h1 에서 h2(10.10.10.2)로 ping 해보고, ip neigh 로 ARP 테이블에 MAC 이 학습되는지 보세요.",
-            "sw(스위치)의 bridge fdb 에 각 호스트 MAC 이 어느 포트에서 학습됐는지 관찰하세요.",
-            "실습 B에서 h2 주소를 10.10.20.2/24로 바꾼 뒤 다른 서브넷으로 ping 하면 왜 'Network unreachable'인지 생각해 보세요.",
-        ],
-    },
-    "07": {
-        "prefix": "clab-07-vxlan-overlay",
-        "title": "07장 VXLAN 오버레이",
-        "fault": "vtep2 의 VXLAN VNI 가 200 으로 설정돼 vtep1(100)과 불일치. "
-                 "언더레이(L3)는 정상이라 outer 패킷은 도착하지만 VNI 가 달라 조용히 버려진다.",
-        "goal": "vtep1 에서 오버레이 주소 192.168.100.2 로 ping 이 통해야 한다.",
-        "success": ("vtep1", ["ping", "-c1", "-W2", "192.168.100.2"], "1 received"),
-        "probes": [
-            ("vtep1 오버레이 ping", "vtep1", ["ping", "-c1", "-W1", "192.168.100.2"]),
-            ("vtep1 언더레이 ping", "vtep1", ["ping", "-c1", "-W1", "10.7.2.1"]),
-            ("vtep1 vxlan 설정", "vtep1", ["ip", "-d", "link", "show", "vxlan100"]),
-            ("vtep2 vxlan 설정", "vtep2", ["ip", "-d", "link", "show", "vxlan100"]),
-            ("vtep1 fdb", "vtep1", ["bridge", "fdb", "show", "dev", "vxlan100"]),
-        ],
-        "hints": [
-            "증상을 정확히 나눠보세요. 언더레이(10.7.x)는 되는데 오버레이(192.168.100.x)만 안 되나요?",
-            "VXLAN 은 양쪽 끝이 합의해야 성립합니다. 한쪽 설정만 보지 말고 vtep1 과 vtep2 를 나란히 비교해 보세요.",
-            "양쪽 vxlan 인터페이스의 VNI(vxlan id)를 비교하세요. 값이 다르면 패킷은 도착해도 조용히 버려집니다.",
-        ],
-    },
-    "04": {
-        "prefix": "clab-04-l3-routing",
-        "title": "04장 L3 라우팅",
-        "fault": "r2 에 10.4.1.0/24(반대편 서브넷)로 가는 경로가 없다. 왕복 중 돌아오는 "
-                 "경로가 끊겨 통신이 실패한다(편도만 되는 전형적 라우팅 누락).",
-        "goal": "h1 에서 h2(다른 서브넷)로 ping 이 통해야 한다.",
-        "success": ("h1", ["ping", "-c1", "-W2", "10.4.2.10"], "1 received"),
-        "probes": [
-            ("h1→h2 ping", "h1", ["ping", "-c1", "-W1", "10.4.2.10"]),
-            ("h1 라우팅", "h1", ["ip", "route"]),
-            ("r1 라우팅", "r1", ["ip", "route"]),
-            ("r2 라우팅", "r2", ["ip", "route"]),
-        ],
-        "hints": [
-            "ping 이 아예 안 가나요, 아니면 가는데 응답이 안 오나요? 편도만 되는지 확인해 보세요.",
-            "라우터의 양방향을 모두 보세요. 가는 경로가 있으면 돌아오는 경로도 있어야 합니다.",
-            "r2 의 라우팅 테이블에 10.4.1.0/24 로 가는 경로가 있는지 확인하세요. 없으면 돌아오는 패킷이 길을 잃습니다.",
-        ],
-    },
-    "10": {
-        "prefix": "clab-10-nat-basics",
-        "title": "10장 NAT 기초",
-        "fault": "nat 노드에 SNAT(MASQUERADE) 규칙이 없다. 안쪽(cli)에서 나간 패킷의 출발지가 "
-                 "사설 주소 그대로라, 바깥(srv)이 응답을 어디로 보낼지 몰라 왕복이 안 된다.",
-        "goal": "cli 에서 srv 로 통신이 왕복해야 한다.",
-        "success": ("cli", ["ping", "-c1", "-W2", "10.10.2.10"], "1 received"),
-        "probes": [
-            ("cli→srv ping", "cli", ["ping", "-c1", "-W1", "10.10.2.10"]),
-            ("nat POSTROUTING", "nat", ["iptables", "-t", "nat", "-S", "POSTROUTING"]),
-            ("nat conntrack", "nat", ["bash", "-c", "conntrack -L 2>/dev/null | head -5"]),
-            ("cli 주소", "cli", ["ip", "-br", "addr"]),
-        ],
-        "hints": [
-            "cli 가 srv 로 보낸 패킷은 도착하는데 응답이 안 오나요? 출발지 주소가 뭘로 보일지 생각해 보세요.",
-            "srv 입장에서 cli 의 사설 주소로는 응답을 보낼 수 없습니다. 중간의 nat 노드가 주소를 바꿔줘야 합니다.",
-            "nat 노드의 iptables NAT 테이블(POSTROUTING)에 MASQUERADE/SNAT 규칙이 있는지 확인하세요.",
-        ],
-    },
-}
-
-
-CHAPTERS.update(EXTRA)
 for chapter_id, chapter_meta in CHAPTERS.items():
     chapter_meta['core_concept'] = CONCEPTS[chapter_id]
 
@@ -135,8 +45,7 @@ def node_exec(instance, prefix, node, argv, timeout=25):
     return lxc_exec(instance, ["docker", "exec", full, *argv], timeout)
 
 
-import re as _re
-_CLAB_RE = _re.compile(r"^clab-(\d{2})-")
+_CLAB_RE = re.compile(r"^clab-(\d{2})-")
 
 
 def deployed_chapter(instance):

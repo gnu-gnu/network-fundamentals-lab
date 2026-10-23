@@ -12,7 +12,7 @@ async function reload(){const marker=String(Math.random());await ev('window.them
 await cmd('Runtime.enable');await cmd('Page.enable');
 await cmd('Emulation.setEmulatedMedia',{features:[{name:'prefers-color-scheme',value:'dark'}]});
 const initial=await cmd('Page.addScriptToEvaluateOnNewDocument',{source:'localStorage.removeItem("netlab-theme")'});
-await cmd('Page.navigate',{url:process.argv[2]||'http://192.168.219.178:18088/u/guest/ctl/'});
+await cmd('Page.navigate',{url:(process.argv[2]||process.env.NETLAB_URL||(()=>{console.error('usage: node browser_theme.mjs <panel url>  (or NETLAB_URL)');process.exit(2)})())});
 await wait('document.readyState==="complete" && !!document.getElementById("themetoggle")');
 await cmd('Page.removeScriptToEvaluateOnNewDocument',{identifier:initial.identifier});
 assert.equal(await ev('document.documentElement.dataset.theme'),'dark');

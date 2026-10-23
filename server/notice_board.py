@@ -1,40 +1,24 @@
 """Latest-only notice with per-reader receipts. Identity is supplied only by labd, not JSON."""
-from contextlib import contextmanager
-import os
-from pathlib import Path
 import re
-import sqlite3
 import time
+from netlab import db as _db
+from netlab.paths import NOTICE_DB as DB
 
-DB = '/var/lib/netlab/notice/notice.sqlite3'
 TOKEN = re.compile(r'^[a-f0-9]{32}$')
 KEEP_NOTICES = 50
 KEEP_READS = 2000
+SCHEMA = '''
+  CREATE TABLE IF NOT EXISTS notices (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, body TEXT NOT NULL,
+    author TEXT NOT NULL, created REAL NOT NULL);
+  CREATE TABLE IF NOT EXISTS reads (
+    notice INTEGER NOT NULL, reader TEXT NOT NULL, read_at REAL NOT NULL,
+    PRIMARY KEY(notice,reader));
+'''
 
 
-@contextmanager
 def connection():
-    Path(DB).parent.mkdir(parents=True, mode=0o700, exist_ok=True)
-    db = sqlite3.connect(DB, timeout=10)
-    os.chmod(DB, 0o600)
-    db.row_factory = sqlite3.Row
-    db.executescript('''
-      CREATE TABLE IF NOT EXISTS notices (
-        id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, body TEXT NOT NULL,
-        author TEXT NOT NULL, created REAL NOT NULL);
-      CREATE TABLE IF NOT EXISTS reads (
-        notice INTEGER NOT NULL, reader TEXT NOT NULL, read_at REAL NOT NULL,
-        PRIMARY KEY(notice,reader));
-    ''')
-    try:
-        db.execute('BEGIN IMMEDIATE')
-        yield db
-        db.commit()
-    except Exception:
-        db.rollback()
-        raise
-    finally:
-        db.close()
+    return _db.connection(DB, SCHEMA)
 
 
 def reader(owner, client):

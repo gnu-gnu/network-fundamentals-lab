@@ -17,13 +17,18 @@ import argparse
 import json
 import os
 import re
-import subprocess
 import sys
 from datetime import datetime, timezone, timedelta
 
-ROOT = "/var/lib/netlab/recordings"
-STATE = "/var/lib/netlab/state.json"
-VM_DIR = "/var/log/lab-sessions"
+# /usr/local/bin 에 복사돼 실행되므로 공용 패키지는 설치 디렉터리에서 찾는다.
+sys.path.insert(0, "/opt/netlab-admin")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from netlab import paths                       # noqa: E402
+from netlab.procs import lxc                   # noqa: E402
+from netlab.recordings import collect_recordings  # noqa: E402
+
+ROOT = paths.RECORD_ROOT
+STATE = paths.STATE_PATH
 
 
 # ────────────────────────── 공통 ──────────────────────────
@@ -40,25 +45,10 @@ def users_with_env():
     return {u: r for u, r in load_state().get("users", {}).items() if r.get("instance")}
 
 
-def lxc(*args, timeout=300):
-    p = subprocess.run(["lxc", *args], capture_output=True, text=True, timeout=timeout)
-    return p.returncode, p.stdout, p.stderr
-
-
-# 게스트가 만드는 기록의 이름 규칙과 크기 상한. labd 와 같은 정책을 쓴다.
-REC_NAME_RE = re.compile(r"^[0-9A-Za-z._-]+\.(cast|commands\.jsonl)$")
-REC_MAX_FILE = 64 * 1024 * 1024
-REC_MAX_TOTAL = 512 * 1024 * 1024
-REC_MAX_FILES = 500
-
-
 def collect(user, instance=None):
     """
     실행 중인 인스턴스에서 기록을 호스트로 가져온다. VM 이 사라져도 기록은 남아야 한다.
-
-    tar 를 쓰지 않는다. 게스트의 lab 사용자는 NOPASSWD:ALL 이라 임의의 tar 스트림을
-    만들 수 있어, 호스트 root 가 그걸 메모리에 받아 풀면 DoS·아카이브 파싱 위험이 있다.
-    이름 규칙에 맞는 파일만 크기를 확인하고 `lxc file pull` 로 하나씩 내려받는다.
+    회수 규칙(이름·크기 상한, tar 미사용)은 labd 와 같은 netlab.recordings 를 쓴다.
     """
     if instance is None:
         rec = users_with_env().get(user)
@@ -75,43 +65,9 @@ def collect(user, instance=None):
         return 0, "상태를 알 수 없습니다"
 
     dest = os.path.join(ROOT, user)
-    os.makedirs(dest, exist_ok=True)
-    os.chmod(dest, 0o700)
-
-    rc, out, _ = lxc("exec", instance, "--", "bash", "-c",
-                     f"find {VM_DIR} -maxdepth 1 -type f -printf '%s %f\\n' 2>/dev/null",
-                     timeout=60)
-    if rc != 0 or not out.strip():
+    collect_recordings(user, instance, skip_empty=False, quiet=True)
+    if not os.path.isdir(dest):
         return 0, "가져올 기록이 없습니다"
-
-    total = count = 0
-    for line in out.splitlines():
-        parts = line.split(" ", 1)
-        if len(parts) != 2:
-            continue
-        try:
-            size = int(parts[0])
-        except ValueError:
-            continue
-        name = parts[1].strip()
-        if not REC_NAME_RE.match(name) or "/" in name or name in (".", ".."):
-            continue
-        if size > REC_MAX_FILE:
-            continue
-        if count >= REC_MAX_FILES or total + size > REC_MAX_TOTAL:
-            break
-        local = os.path.join(dest, name)
-        if os.path.exists(local) and os.path.getsize(local) >= size:
-            continue
-        r2, _, _ = lxc("file", "pull", f"{instance}{VM_DIR}/{name}", local, timeout=120)
-        if r2 != 0:
-            continue
-        try:
-            os.chmod(local, 0o600)
-        except OSError:
-            pass
-        total += size
-        count += 1
     n = len([f for f in os.listdir(dest) if f.endswith(".cast")])
     return n, None
 

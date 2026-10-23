@@ -1,22 +1,16 @@
 """Persistent, bounded conversation jobs. No model-generated commands are executed."""
-import importlib.util
 import json
 import logging
-import os
-from pathlib import Path
 import re
 import secrets
-import sqlite3
 import threading
 import time
-import knowledge
-from contextlib import contextmanager
 from concurrent.futures import ThreadPoolExecutor
+import knowledge
+import netlab_tutor as tutor
+from netlab import db as _db
+from netlab.paths import TUTOR_DB as DB
 
-spec = importlib.util.spec_from_file_location('netlab_tutor', Path(__file__).with_name('netlab-tutor.py'))
-tutor = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(tutor)
-DB = '/var/lib/netlab/tutor/chat.sqlite3'
 TOKEN = re.compile(r'^[a-f0-9]{64}$')
 GUARD = threading.Lock()
 ACTIVE = set()
@@ -83,45 +77,36 @@ def terminal_context(instance):
             'time': time.time(), 'output': out[:12000], 'untrusted': True}
 
 
-@contextmanager
-def connection():
-    os.makedirs(os.path.dirname(DB), mode=0o700, exist_ok=True)
-    db = sqlite3.connect(DB, timeout=10)
-    os.chmod(DB, 0o600)
-    db.row_factory = sqlite3.Row
-    db.executescript('''
-      CREATE TABLE IF NOT EXISTS sessions (
-        id TEXT PRIMARY KEY, owner TEXT NOT NULL, instance TEXT NOT NULL,
-        epoch TEXT NOT NULL, context TEXT NOT NULL DEFAULT '', created REAL NOT NULL);
-      CREATE TABLE IF NOT EXISTS jobs (
-        id TEXT PRIMARY KEY, session TEXT NOT NULL, request TEXT NOT NULL,
-        question TEXT NOT NULL, answer TEXT, status TEXT NOT NULL, evidence TEXT,
-        created REAL NOT NULL, UNIQUE(session, request));
-      CREATE TABLE IF NOT EXISTS memories (
-        session TEXT NOT NULL, context TEXT NOT NULL, summary TEXT NOT NULL,
-        through_time REAL NOT NULL, PRIMARY KEY(session,context));
-      CREATE INDEX IF NOT EXISTS jobs_session_created ON jobs(session,created);
-      CREATE INDEX IF NOT EXISTS sessions_owner_created ON sessions(owner,created);
-    ''')
-    if 'context' not in [r[1] for r in db.execute('PRAGMA table_info(jobs)')]:
-        db.execute("ALTER TABLE jobs ADD COLUMN context TEXT NOT NULL DEFAULT ''")
-    if 'chapter' not in [r[1] for r in db.execute('PRAGMA table_info(sessions)')]:
-        db.execute("ALTER TABLE sessions ADD COLUMN chapter TEXT NOT NULL DEFAULT ''")
+SCHEMA = '''
+  CREATE TABLE IF NOT EXISTS sessions (
+    id TEXT PRIMARY KEY, owner TEXT NOT NULL, instance TEXT NOT NULL,
+    epoch TEXT NOT NULL, context TEXT NOT NULL DEFAULT '', created REAL NOT NULL);
+  CREATE TABLE IF NOT EXISTS jobs (
+    id TEXT PRIMARY KEY, session TEXT NOT NULL, request TEXT NOT NULL,
+    question TEXT NOT NULL, answer TEXT, status TEXT NOT NULL, evidence TEXT,
+    created REAL NOT NULL, UNIQUE(session, request));
+  CREATE TABLE IF NOT EXISTS memories (
+    session TEXT NOT NULL, context TEXT NOT NULL, summary TEXT NOT NULL,
+    through_time REAL NOT NULL, PRIMARY KEY(session,context));
+  CREATE INDEX IF NOT EXISTS jobs_session_created ON jobs(session,created);
+  CREATE INDEX IF NOT EXISTS sessions_owner_created ON sessions(owner,created);
+'''
+
+
+def _migrate(db):
     for table, column, definition in (
+        ('jobs', 'context', "TEXT NOT NULL DEFAULT ''"),
+        ('sessions', 'chapter', "TEXT NOT NULL DEFAULT ''"),
         ('sessions', 'help_level', 'INTEGER NOT NULL DEFAULT 0'),
         ('jobs', 'help_level', 'INTEGER NOT NULL DEFAULT 0'),
         ('jobs', 'mode', "TEXT NOT NULL DEFAULT 'chat'"),
         ('jobs', 'model_id', "TEXT NOT NULL DEFAULT ''")):
-        if column not in [r[1] for r in db.execute('PRAGMA table_info(' + table + ')')]:
-            db.execute('ALTER TABLE ' + table + ' ADD COLUMN ' + column + ' ' + definition)
-    try:
-        yield db
-        db.commit()
-    except Exception:
-        db.rollback()
-        raise
-    finally:
-        db.close()
+        _db.add_column_if_missing(db, table, column, definition)
+
+
+def connection():
+    # 튜터는 긴 작업 중에도 읽기를 막지 않도록 즉시 잠금(BEGIN IMMEDIATE)을 쓰지 않는다.
+    return _db.connection(DB, SCHEMA, immediate=False, migrate=_migrate)
 
 
 def handle(user, instance, epoch, body, shared_vm=False):

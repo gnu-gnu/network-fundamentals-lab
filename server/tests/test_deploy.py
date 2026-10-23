@@ -1,9 +1,13 @@
 import importlib.util
 import json
 from pathlib import Path
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
+
+sys.path.insert(0, str(Path(__file__).parents[1]))
+from netlab import access, nginx, paths, store  # noqa: E402
 
 SPEC = importlib.util.spec_from_file_location('deploy', Path(__file__).parents[1] / 'deploy.py')
 deploy = importlib.util.module_from_spec(SPEC)
@@ -27,26 +31,28 @@ class SourceTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, 'placeholders only'):
                 deploy.validate_source()
 
+    def test_deploy_list_covers_every_package_module_and_template(self):
+        for path in sorted((deploy.SOURCE / 'netlab').glob('*.py')) + sorted((deploy.SOURCE / 'templates').glob('*.html')):
+            self.assertIn(str(path.relative_to(deploy.SOURCE)), deploy.FILES)
+        self.assertNotIn('deploy.py', deploy.FILES)
+        self.assertFalse(any(f.startswith('tests/') for f in deploy.FILES))
+
     def test_access_new_accounts_never_become_admin(self):
-        spec = importlib.util.spec_from_file_location('labd', deploy.SOURCE / 'labd.py')
-        labd = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(labd)
-        labd.USERS_LOADED = True
-        with patch.object(labd, 'save_users'), patch.object(labd, 'regen_routing'), \
-                patch.object(labd.os.path, 'exists', return_value=False):
-            _, record = labd.lookup_or_create('new@example.org')
+        store.USERS.clear()
+        store.USERS_LOADED = True
+        with patch.object(store, 'save_users'), patch.object(nginx, 'regen_routing'), \
+                patch.object(access.os.path, 'exists', return_value=False):
+            _, record = access.lookup_or_create('new@example.org')
         self.assertEqual(record['role'], 'user')
 
     def test_access_corrupt_table_denies_login(self):
-        spec = importlib.util.spec_from_file_location('labd', deploy.SOURCE / 'labd.py')
-        labd = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(labd)
         with tempfile.TemporaryDirectory() as d:
             p = Path(d) / 'users.json'
             p.write_text('{broken')
-            labd.USERS_PATH = str(p)
-            labd.load_users()
-            self.assertEqual(labd.lookup_or_create('new@example.org'), (None, None))
+            with patch.object(paths, 'USERS_PATH', str(p)):
+                store.load_users()
+            self.assertEqual(access.lookup_or_create('new@example.org'), (None, None))
+        store.USERS_LOADED = True
 
 
 class DeploymentTests(unittest.TestCase):

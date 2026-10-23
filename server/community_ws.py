@@ -5,13 +5,13 @@ from contextlib import suppress
 import json
 import logging
 from http import HTTPStatus
-from pathlib import Path
 import signal
 import time
 from websockets.asyncio.server import serve
 from websockets.exceptions import ConnectionClosed
 import community_auth
 import community_chat
+from netlab import paths
 
 
 class Room:
@@ -135,7 +135,8 @@ class Room:
 
 
 async def main():
-    secret = Path('/etc/netlab/proxy.secret').read_text().strip()
+    with open(paths.PROXY_SECRET_PATH) as f:
+        secret = f.read().strip()
     if not secret:
         raise RuntimeError('Missing community signing secret')
     room = Room(secret)
@@ -145,7 +146,7 @@ async def main():
     stop = asyncio.get_running_loop().create_future()
     for sig in (signal.SIGTERM, signal.SIGINT):
         asyncio.get_running_loop().add_signal_handler(sig, lambda: stop.done() or stop.set_result(None))
-    async with serve(room.handle, '127.0.0.1', 9001, ping_interval=25, ping_timeout=20,
+    async with serve(room.handle, *paths.COMMUNITY_LISTEN, ping_interval=25, ping_timeout=20,
                      max_size=8192, max_queue=8, compression=None, close_timeout=3,
                      server_header=None, process_request=health):
         await stop

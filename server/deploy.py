@@ -20,25 +20,30 @@ import urllib.request
 SOURCE = Path(__file__).resolve().parent
 DEST = Path('/opt/netlab-admin')
 UNIT = Path('/etc/systemd/system/labd.service')
+def _tree(*patterns):
+    found = []
+    for pattern in patterns:
+        found.extend(sorted(str(p.relative_to(SOURCE)) for p in SOURCE.glob(pattern)
+                            if p.is_file() and '__pycache__' not in p.parts))
+    return tuple(found)
+
+
+# 배포 대상. 디렉터리는 glob 으로 모아 모듈·에셋을 추가할 때 목록을 손으로 고치지 않게 한다.
+# 소스 트리에 있어도 배포하지 않는 것: tests/, config/ 예제, 이 두 설치 스크립트.
 FILES = (
-    'labd.py', 'netlab-tutor.py', 'tutor_chat.py', 'netlab-user', 'netlab-record', 'netlab-backup',
-    'assets/tutor.js', 'assets/tutor.css', 'community_chat.py', 'community_auth.py', 'community_ws.py',
-    'requirements-community.txt', 'assets/community-transport.js', 'assets/community-presence.js',
-    'assets/community.js', 'assets/community.css', 'notice_board.py', 'assets/notice.js', 'assets/notice.css', 'assets/theme.js', 'assets/terminal-theme.js',
-    'tutor_chapters.py',
-    'knowledge.py', 'guide_view.py', 'knowledge/corpus.json',
-    'lab-session', 'lab-shell.sh', 'ttyd-lab', 'apply-shell.sh',
-    'nginx-netlab.conf', 'nginx-open.conf', 'lxd-preseed-zfs.yaml', 'README.md',
-    'OPERATIONS.md', 'THIRD_PARTY.md',
-    'assets/player.js', 'assets/player.css', 'assets/replay.js', 'assets/replay.css',
-    'assets/asciinema-player-LICENSE',
-    'systemd/labd.service', 'systemd/netlab-netguard.service',
-    'systemd/netlab-community.service',
-    'systemd/lxd-docker-fix.service',
-    'netguard.sh', 'guest-bootstrap.sh',
-    'systemd/netlab-bootstrap-netguard.service', 'systemd/netlab-bootstrap-netguard.timer',
-)
+    'labd.py', 'netlab_tutor.py', 'tutor_chapters.py', 'tutor_chat.py', 'knowledge.py', 'guide_view.py',
+    'community_chat.py', 'community_auth.py', 'community_ws.py', 'notice_board.py',
+    'requirements-community.txt',
+    'netlab-user', 'netlab-record', 'netlab-backup',
+    'lab-session', 'lab-shell.sh', 'ttyd-lab', 'apply-shell.sh', 'netguard.sh', 'guest-bootstrap.sh',
+    'nginx-netlab.conf', 'nginx-open.conf', 'lxd-preseed-zfs.yaml',
+    'README.md', 'OPERATIONS.md', 'DEVELOPMENT.md', 'THIRD_PARTY.md',
+    'knowledge/corpus.json',
+) + _tree('netlab/*.py', 'templates/*.html', 'assets/*', 'systemd/*')
+
 CLI = ('netlab-user', 'netlab-record', 'netlab-backup')
+# 이름이 바뀌어 더는 배포하지 않는 파일. 설치 디렉터리에 남아 있으면 지운다.
+OBSOLETE = ('netlab-tutor.py',)
 SHELL = ('netlab-user', 'lab-session', 'lab-shell.sh', 'ttyd-lab', 'apply-shell.sh',
          'netguard.sh', 'guest-bootstrap.sh')
 
@@ -47,19 +52,25 @@ def run(*args):
     return subprocess.run(args, check=True, capture_output=True, text=True).stdout.strip()
 
 
+def source_revision():
+    """배포한 소스의 git 커밋·브랜치·수정 여부. git 저장소가 아니면 None (어느 커밋이 올라갔는지 추적용)."""
+    try:
+        git = ['git', '-C', str(SOURCE)]
+        head = subprocess.run([*git, 'rev-parse', 'HEAD'], capture_output=True, text=True, check=True).stdout.strip()
+        branch = subprocess.run([*git, 'rev-parse', '--abbrev-ref', 'HEAD'], capture_output=True, text=True).stdout.strip()
+        dirty = bool(subprocess.run([*git, 'status', '--porcelain', '--', '.'], capture_output=True, text=True).stdout.strip())
+        return {'commit': head, 'branch': branch, 'dirty': dirty, 'deployed': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}
+    except (OSError, subprocess.CalledProcessError):
+        return None
+
+
 def validate_source():
     for name in FILES:
         p = SOURCE / name
         if not p.is_file() or p.is_symlink():
             raise RuntimeError(f'Missing or symlinked source: {name}')
-    for name in ('labd.py', 'netlab-tutor.py', 'tutor_chat.py', 'tutor_chapters.py', 'netlab-record', 'netlab-backup', 'bootstrap.py', 'deploy.py'):
+    for name in [f for f in FILES if f.endswith('.py')] + ['bootstrap.py', 'deploy.py', 'netlab-record', 'netlab-backup']:
         compile((SOURCE / name).read_text(), name, 'exec')
-    compile((SOURCE / 'knowledge.py').read_text(), 'knowledge.py', 'exec')
-    compile((SOURCE / 'community_chat.py').read_text(), 'community_chat.py', 'exec')
-    for name in ('community_auth.py', 'community_ws.py'):
-        compile((SOURCE / name).read_text(), name, 'exec')
-    compile((SOURCE / 'notice_board.py').read_text(), 'notice_board.py', 'exec')
-    compile((SOURCE / 'guide_view.py').read_text(), 'guide_view.py', 'exec')
     corpus = json.loads((SOURCE / 'knowledge/corpus.json').read_text())
     for document in corpus['documents']:
         if hashlib.sha256(document['text'].encode()).hexdigest() != document['sha256']:
@@ -72,12 +83,10 @@ def validate_source():
     for p in (SOURCE / 'config').glob('*.example.json'):
         json.loads(p.read_text())
     template = (SOURCE / 'nginx-netlab.conf').read_text()
-    headers = re.findall(r'proxy_set_header X-Lab-Proxy-Auth ([^;]+);', template)
-    if len(headers) != 4 or any(h != '"__NETLAB_PROXY_SECRET__"' for h in headers):
-        raise RuntimeError('Nginx source must contain placeholders only')
-    headers = re.findall(r'proxy_set_header X-Lab-Proxy-Auth ([^;]+);', (SOURCE / 'nginx-open.conf').read_text())
-    if headers != ['"__NETLAB_PROXY_SECRET__"']:
-        raise RuntimeError('Open Nginx source must contain placeholder only')
+    for conf in ('nginx-netlab.conf', 'nginx-open.conf'):
+        headers = re.findall(r'proxy_set_header X-Lab-Proxy-Auth ([^;]+);', (SOURCE / conf).read_text())
+        if not headers or any(h != '"__NETLAB_PROXY_SECRET__"' for h in headers):
+            raise RuntimeError('Nginx source must contain placeholders only')
 
 
 def preflight():
@@ -119,6 +128,10 @@ def ensure_community_runtime():
 
 
 def install_code():
+    for name in OBSOLETE:
+        stale = DEST / name
+        if stale.is_file() and not stale.is_symlink():
+            stale.unlink()
     for name in FILES:
         dest = DEST / name
         dest.parent.mkdir(parents=True, exist_ok=True)
@@ -197,8 +210,12 @@ def deploy():
         run('systemctl', 'restart', 'netlab-community')
         health()
         manifest = {name: hashlib.sha256((DEST / name).read_bytes()).hexdigest() for name in FILES}
+        manifest['_source'] = source_revision()
         (DEST / 'release-manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
         print(f'Deployed; backup: {backup}')
+        if manifest['_source']:
+            src = manifest['_source']
+            print(f"Source: {src['branch']}@{src['commit'][:12]}" + (' (uncommitted changes)' if src['dirty'] else ''))
         print('Existing /etc/netlab, live nginx site, network units and VMs preserved.')
     except BaseException:
         if saved:

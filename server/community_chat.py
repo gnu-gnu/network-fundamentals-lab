@@ -1,42 +1,26 @@
 """Small authenticated common room. Identity is supplied only by labd, not JSON."""
-from contextlib import contextmanager
-import os
-from pathlib import Path
 import re
-import sqlite3
 import time
+from netlab import db as _db
+from netlab.paths import COMMUNITY_DB as DB
 
-DB = '/var/lib/netlab/community/chat.sqlite3'
 TOKEN = re.compile(r'^[a-f0-9]{32}$')
+SCHEMA = '''
+  CREATE TABLE IF NOT EXISTS messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, owner TEXT NOT NULL, client TEXT NOT NULL,
+    request TEXT NOT NULL, text TEXT NOT NULL, created REAL NOT NULL,
+    UNIQUE(owner,client,request));
+  CREATE TABLE IF NOT EXISTS presence (
+    owner TEXT NOT NULL, client TEXT NOT NULL, seen REAL NOT NULL,
+    PRIMARY KEY(owner,client));
+  CREATE TABLE IF NOT EXISTS limits (
+    scope TEXT NOT NULL, period INTEGER NOT NULL, bucket INTEGER NOT NULL,
+    count INTEGER NOT NULL, PRIMARY KEY(scope,period,bucket));
+'''
 
 
-@contextmanager
 def connection():
-    Path(DB).parent.mkdir(parents=True, mode=0o700, exist_ok=True)
-    db = sqlite3.connect(DB, timeout=10)
-    os.chmod(DB, 0o600)
-    db.row_factory = sqlite3.Row
-    db.executescript('''
-      CREATE TABLE IF NOT EXISTS messages (
-        id INTEGER PRIMARY KEY AUTOINCREMENT, owner TEXT NOT NULL, client TEXT NOT NULL,
-        request TEXT NOT NULL, text TEXT NOT NULL, created REAL NOT NULL,
-        UNIQUE(owner,client,request));
-      CREATE TABLE IF NOT EXISTS presence (
-        owner TEXT NOT NULL, client TEXT NOT NULL, seen REAL NOT NULL,
-        PRIMARY KEY(owner,client));
-      CREATE TABLE IF NOT EXISTS limits (
-        scope TEXT NOT NULL, period INTEGER NOT NULL, bucket INTEGER NOT NULL,
-        count INTEGER NOT NULL, PRIMARY KEY(scope,period,bucket));
-    ''')
-    try:
-        db.execute('BEGIN IMMEDIATE')
-        yield db
-        db.commit()
-    except Exception:
-        db.rollback()
-        raise
-    finally:
-        db.close()
+    return _db.connection(DB, SCHEMA)
 
 
 def name(owner, client):

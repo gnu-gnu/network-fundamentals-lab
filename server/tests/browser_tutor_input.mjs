@@ -32,7 +32,7 @@ window.fetch=(url,options)=>{
  return originalFetch(url,options);
 };
 `});
-await cmd('Page.navigate',{url:process.argv[2]||'http://192.168.219.178:18088/u/guest/ctl/'});
+await cmd('Page.navigate',{url:(process.argv[2]||process.env.NETLAB_URL||(()=>{console.error('usage: node browser_tutor_input.mjs <panel url>  (or NETLAB_URL)');process.exit(2)})())});
 await wait('typeof tutorSend==="function"');
 await ev('refresh().then(()=>document.getElementById("running").classList.remove("hide"))');
 await ev('if(document.getElementById("tutorpanel").hidden)document.getElementById("tutorlauncher").click()');
