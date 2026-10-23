@@ -9,6 +9,7 @@ import os
 from pathlib import Path, PurePosixPath
 import re
 import shutil
+import sqlite3
 import stat
 import subprocess
 import tarfile
@@ -17,6 +18,20 @@ import time
 
 PATHS = ('etc/netlab', 'var/lib/netlab', 'etc/nginx/sites-available/netlab')
 NAME = re.compile(r'^netlab-[a-f0-9]{10}$')
+SQLITE = '.sqlite3'
+SQLITE_SIDE = ('-wal', '-shm', '-journal')     # live side files are never copied; the main file is a backup-API copy
+# Learning pack v2 progress (netlab/lesson_progress.py): queries that must return 0.
+PROGRESS_RELATIONS = {
+    'open attempts per account/instance': "SELECT count(*) FROM (SELECT 1 FROM attempts WHERE ended_at IS NULL "
+                                           "GROUP BY account, instance HAVING count(*) > 1)",
+    'completion of another account or lesson': "SELECT count(*) FROM completion_events c JOIN attempts a USING(attempt_id) "
+                                               "WHERE c.account <> a.account OR c.lesson_id <> a.lesson_id OR a.completed_at IS NULL",
+    'event job of another account': "SELECT count(*) FROM step_events e JOIN attempts a USING(attempt_id) "
+                                    "JOIN lesson_jobs j ON j.job_id = e.job_id WHERE j.account <> a.account",
+    'summary differs from completions': "SELECT count(*) FROM lesson_summary s WHERE completions <> (SELECT count(*) "
+                                        "FROM completion_events c WHERE c.account = s.account AND c.lesson_id = s.lesson_id "
+                                        "AND c.shared = 0)",
+}
 
 
 def run(*cmd):
@@ -93,6 +108,61 @@ def crypt(src, dst, secret, home, decrypt=False):
         raise RuntimeError('Encryption/decryption failed (wrong password, damaged archive, or gpg error)')
 
 
+def copy_sqlite(src, dst):
+    """Consistent copy through the SQLite backup API, safe while another service still writes (chat)."""
+    if dst.exists():
+        dst.unlink()
+    source = sqlite3.connect(str(src), timeout=30)
+    try:
+        target = sqlite3.connect(str(dst))
+        try:
+            source.backup(target)
+            target.execute('PRAGMA journal_mode=DELETE')    # self-contained file: readable with no side files
+        finally:
+            target.close()
+    finally:
+        source.close()
+    for side in SQLITE_SIDE:
+        Path(str(dst) + side).unlink(missing_ok=True)
+    shutil.copystat(src, dst)
+
+
+def verify_sqlite(path):
+    """Problems found in one database: integrity, foreign keys and, for learning progress, the relations
+    between attempts, events, jobs and completions. Empty list = fine."""
+    problems = []
+    try:
+        db = sqlite3.connect(f'file:{path}?mode=ro', uri=True)
+    except sqlite3.Error as exc:
+        return [f'{path.name}: cannot open ({exc})']
+    try:
+        result = [r[0] for r in db.execute('PRAGMA integrity_check')]
+        if result != ['ok']:
+            problems.append(f'{path.name}: integrity_check {result[:3]}')
+        if db.execute('PRAGMA foreign_key_check').fetchall():
+            problems.append(f'{path.name}: foreign_key_check failed')
+        tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        if {'attempts', 'step_events', 'lesson_jobs', 'completion_events', 'lesson_summary'} <= tables:
+            for name, sql in PROGRESS_RELATIONS.items():
+                if db.execute(sql).fetchone()[0]:
+                    problems.append(f'{path.name}: {name}')
+    except sqlite3.Error as exc:
+        problems.append(f'{path.name}: {exc}')
+    finally:
+        db.close()
+    return problems
+
+
+def verify_databases(root):
+    found, problems = [], []
+    for path in sorted(Path(root).rglob('*' + SQLITE)):
+        found.append(str(path.relative_to(root)))
+        problems += verify_sqlite(path)
+    if problems:
+        raise RuntimeError('Database check failed: ' + '; '.join(problems))
+    return found
+
+
 def copy_tree(src, dst):
     src, dst = Path(src), Path(dst)
     if src.is_symlink() or dst.is_symlink() or any(p.is_symlink() for p in dst.parents):
@@ -103,8 +173,13 @@ def copy_tree(src, dst):
             copy_tree(child, dst / child.name)
         shutil.copystat(src, dst)
     elif src.is_file():
+        if src.name.endswith(tuple(SQLITE + side for side in SQLITE_SIDE)):
+            return
         dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src, dst)
+        if src.name.endswith(SQLITE):
+            copy_sqlite(src, dst)
+        else:
+            shutil.copy2(src, dst)
     else:
         raise RuntimeError(f'Non-regular source: {src}')
 
@@ -158,7 +233,8 @@ def create(args, temp, secret):
             run('lxc', 'image', 'export', fingerprint, str(payload / 'image'))
         for path in PATHS:
             copy_tree(Path('/') / path, payload / 'files' / path)
-        manifest = {'version': 1, 'mode': args.mode, 'created': time.time(),
+        databases = verify_databases(payload / 'files')
+        manifest = {'version': 1, 'mode': args.mode, 'created': time.time(), 'databases': databases,
                     'infrastructure': infra, 'instances': names if args.mode == 'full' else [],
                     'previously_running': running, 'code_sha256': digest('/opt/netlab-admin/labd.py')}
         if args.mode == 'full':
@@ -247,6 +323,7 @@ def unpack(tarpath, dest):
 
 
 def preflight_restore(payload, manifest):
+    verify_databases(payload / 'files')
     cfg = read(payload / 'files/etc/netlab/config.json')
     if infrastructure(cfg) != manifest['infrastructure']:
         raise RuntimeError('Target network/profile/storage mismatch; provision matching infrastructure first')
@@ -394,6 +471,7 @@ def main():
                 manifest = unpack(tarpath, payload)
                 if args.command == 'inspect':
                     info = {k: manifest[k] for k in ('version', 'mode', 'created', 'instances')}
+                    info['databases_checked'] = verify_databases(payload / 'files')
                     info['subnet'] = manifest['infrastructure']['network']['ipv4.address']
                     info['profile'] = manifest['infrastructure']['profile']
                     print(json.dumps(info, indent=2))

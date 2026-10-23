@@ -19,10 +19,14 @@ nginx would, so authentication, routing, jobs and the progress DB are the real o
   --m2           M2: solve (12, 03, 17), terminal-started lessons adopted by the web (lab 12, lab 17 ospf/bgp),
                  lab check is reference only, lab reset, the shell-runtime example pack, the legacy `lab 04`
                  path next to the runner, and the tutor's probe path through the runner
+  --m3           M3: the VM comes from the configured runner image (fingerprint and release match the image
+                 record, no packctl install), a clean-snapshot restore keeps the runner and renews the
+                 incarnation, and the emergency stop (config lessons_paused) refuses new work with 503
 """
 import argparse
 import http.client
 import json
+import os
 import subprocess
 import sys
 import time
@@ -114,6 +118,7 @@ def main():
     parser.add_argument('--with-cli', action='store_true')
     parser.add_argument('--with-reboot', action='store_true')
     parser.add_argument('--m2', action='store_true')
+    parser.add_argument('--m3', action='store_true')
     args = parser.parse_args()
     config = json.load(open('/etc/netlab/config.json'))
     if config.get('environment') != 'development':
@@ -255,7 +260,75 @@ def main():
     assert view['environment']['state'] == 'idle' and view['attempt'] is None, view
     rc, left, _ = lxc('exec', instance, '--', 'docker', 'ps', '-q', '--filter', 'name=clab-12-mtu-pmtud')
     assert not left.strip()
+    if args.m3:
+        run_m3(labd, instance, args.account)
     print(f'OK — M1 실기 검사 통과 ({time.time() - started:.0f}s, {instance})')
+
+
+def set_paused(paused):
+    """Toggle the emergency stop the way an operator would: edit the config, then SIGHUP labd."""
+    path = '/etc/netlab/config.json'
+    config = json.load(open(path))
+    if paused:
+        config['lessons_paused'] = True
+    else:
+        config.pop('lessons_paused', None)
+    st = os.stat(path)
+    tmp = path + '.m3test'
+    with open(tmp, 'w') as f:
+        os.fchmod(f.fileno(), st.st_mode & 0o777)
+        os.fchown(f.fileno(), st.st_uid, st.st_gid)
+        json.dump(config, f, indent=2, ensure_ascii=False)
+    os.replace(tmp, path)
+    subprocess.run(['systemctl', 'kill', '-s', 'HUP', 'labd'], check=True)
+    time.sleep(2)
+
+
+def run_m3(labd, instance, account):
+    image = json.load(open('/etc/netlab/config.json')).get('image', 'netlab')
+    step(f'M3 이미지({image})에서 만든 VM: 기반 지문·릴리스가 이미지 기록과 같다')
+    rc, out, _ = lxc('query', f'/1.0/images/aliases/{image}')
+    target = json.loads(out)['target']
+    rc, base, _ = lxc('config', 'get', instance, 'volatile.base_image')
+    assert base.strip() == target, (base, target)
+    record = json.load(open(f'/var/lib/netlab/images/{image}.json'))
+    assert record['fingerprint'] == target, record
+    rc, current, _ = lxc('exec', instance, '--', 'readlink', '/opt/netlab/current')
+    assert current.strip().endswith(record['release']), (current, record['release'])
+    env = labd.state()['environment']
+    assert env['path'] == 'runner' and all(env['bundles_current'].values()), env
+
+    step('M3 초기화(clean 스냅샷 복원) 뒤에도 실행기가 남고 환경 식별자가 바뀐다')
+    before = labd.token()
+    code, body = labd.call('POST', 'restore', {})
+    assert code == 200 and body.get('ok'), (code, body)
+    deadline = time.time() + 600
+    view = None
+    while time.time() < deadline:
+        rec = json.load(open('/var/lib/netlab/state.json'))['users'][account]
+        code, view = labd.call('GET', 'lesson/state')
+        if rec.get('status') == 'running' and code == 200:
+            break
+        time.sleep(5)
+    else:
+        raise AssertionError(f'restore did not finish: {code} {view}')
+    after = view['environment']['observed']
+    assert after['incarnation'] != before['incarnation'], (before, after)
+    assert view['environment']['state'] == 'idle' and view['attempt'] is None, view
+    job = labd.act('start')
+    assert job['state'] == 'done', job
+    assert status_of(labd.check()) == 'fail'
+    assert labd.act('stop')['state'] == 'done'
+
+    step('M3 긴급 중지: 새 작업은 503, 조회는 그대로')
+    set_paused(True)
+    try:
+        code, body = labd.submit(f'lesson/{LESSON}/start')
+        assert code == 503 and body['error'] == 'paused', (code, body)
+        assert labd.state()['environment']['paused'] is True
+    finally:
+        set_paused(False)
+    assert labd.state()['environment']['paused'] is False
 
 
 def status_of(job):

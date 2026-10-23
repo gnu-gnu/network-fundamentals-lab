@@ -32,7 +32,7 @@ class AgentError(Exception):
 
 class RunnerMissing(AgentError):
     def __init__(self):
-        super().__init__('runner_missing', '이 실습 환경에는 단계형 실습 실행기가 없습니다. 새 환경에서 사용할 수 있습니다.', 410)
+        super().__init__('runner_missing', '이 실습 환경은 단계형 실습 이전 버전입니다. 환경을 반납하고 새로 시작하면 쓸 수 있습니다(반납하면 작업 파일이 사라집니다).', 410)
 
 
 def _lxc(*args, timeout=30, stdin=None):

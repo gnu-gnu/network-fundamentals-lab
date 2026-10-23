@@ -21,6 +21,45 @@ def new_incarnation():
     return str(uuid.UUID(bytes=os.urandom(16), version=4))
 
 
+_IMAGE_CACHE = {}   # 설정 이미지 → (지문, 조회 시각)
+
+
+def image_fingerprint(image=None):
+    """설정한 이미지(별칭 또는 지문)의 전체 지문. 조회하지 못하면 None.
+
+    별칭 이름만 보고 같은 이미지로 간주하지 않는다. 별칭이 새 이미지로 옮겨지면 지문이 달라진다."""
+    image = image or CONFIG["image"]
+    cached = _IMAGE_CACHE.get(image)
+    if cached and time.time() - cached[1] < 60:
+        return cached[0]
+    found = None
+    for path in (f"/1.0/images/aliases/{image}", f"/1.0/images/{image}"):
+        rc, out, _ = lxc("query", path, timeout=30)
+        if rc == 0:
+            try:
+                data = json.loads(out)
+                found = data.get("target") or data.get("fingerprint")
+            except ValueError:
+                found = None
+            if found:
+                break
+    if found:
+        _IMAGE_CACHE[image] = (found, time.time())
+    return found
+
+
+def base_image(name):
+    """VM 이 만들어진 이미지의 지문(LXD volatile.base_image). 모르면 None."""
+    rc, out, _ = lxc("config", "get", name, "volatile.base_image", timeout=30)
+    return (out.strip() or None) if rc == 0 else None
+
+
+def stale_spare(name):
+    """예비 VM 이 지금 설정한 이미지가 아닌 이미지로 만들어졌는지. 둘 중 하나라도 모르면 False(그대로 둔다)."""
+    want, have = image_fingerprint(), base_image(name)
+    return bool(want and have and want != have)
+
+
 def used_ips():
     ips = {r.get("ip") for r in STATE["users"].values() if r.get("ip")}
     ips |= {p.get("ip") for p in STATE["pool"] if p.get("ip")}
@@ -197,6 +236,8 @@ def claim_for(user):
     with LOCK:
         for p in list(STATE["pool"]):
             if p.get("ready"):
+                if stale_spare(p["instance"]):
+                    continue     # 이전 이미지의 예비는 배정하지 않는다. 유지 작업이 교체한다.
                 if not ensure_lab_permissions(p['instance']):
                     p['ready'] = False
                     save_state()

@@ -21,6 +21,8 @@ import urllib.request
 import uuid
 
 import deploy
+import pack_format
+import packctl
 
 ROOT = Path(__file__).resolve().parent
 STATE_DIR = Path('/var/lib/netlab-bootstrap')
@@ -183,11 +185,20 @@ def build_image(args):
         (STATE_DIR / 'guest-build.log').write_text(result)
         if 'NETLAB_GOLDEN_SMOKE_OK' not in result:
             raise RuntimeError('Guest smoke result missing')
-    run('lxc', 'stop', name, '--timeout=60')
-    run('lxc', 'publish', name, '--alias', 'netlab', timeout=1800)
+        # Learning pack v2: the runner and every catalog pack go into the image before publishing, so a
+        # VM restored to its clean snapshot keeps them. Bundles come from this checkout's sources.
+        catalog = pack_format.build(ROOT.parent)
+        if catalog != json.loads((ROOT / 'knowledge' / 'v2' / 'catalog.json').read_text()):
+            raise RuntimeError('Stale knowledge/v2/catalog.json; run python3 server/build_knowledge.py')
+        bundles = []
+        for pack in sorted(catalog['packs']):
+            path = temp / f'{pack}-bundle.tar'
+            pack_format.write_bundle(ROOT.parent, catalog, pack, path)
+            bundles.append(pack_format.read_bundle(path, catalog['packs'][pack]['bundle']['revision']))
+        # Publishes as `netlab`, writes the image record and deletes exactly this builder; keeps it on failure.
+        packctl.finish_image(name, 'netlab', bundles, catalog, dict(image='ubuntu:24.04', fingerprint=None),
+                             source='bootstrap', run=packctl.lxc, code_dir=ROOT)
     write_json(state, {'instance': name, 'status': 'published'})
-    # Exact uniquely-created build VM only; never remove user instances or an old image.
-    run('lxc', 'delete', name)
 
 
 def configure_portal(args):
@@ -250,7 +261,7 @@ def main():
     p.add_argument('--admin-email', default='')
     args = p.parse_args()
     validate(args)
-    print('Plan: Ubuntu packages → LXD 5.21 → labpool/lxdbr0/netlab profile → firewall → golden VM → portal')
+    print('Plan: Ubuntu packages → LXD 5.21 → labpool/lxdbr0/netlab profile → firewall → golden VM (+ lesson runner) → portal')
     if not args.apply:
         print('Read-only plan. Add --apply to execute. Default: unauthenticated shared guest portal on :8088.')
         return

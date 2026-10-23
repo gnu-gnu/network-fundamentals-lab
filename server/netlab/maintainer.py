@@ -6,7 +6,7 @@ import time
 from . import paths, store
 from .instances import (create_instance, destroy_for, drop_pool, enforce_isolation,
                         ensure_lab_permissions, finish_ready, instance_state,
-                        stop_for, ttyd_ready)
+                        stale_spare, stop_for, ttyd_ready)
 from .nginx import regen_routing
 from .procs import lxc
 from .recordings import collect_recordings
@@ -70,6 +70,28 @@ def heal_pool():
             log(f"준비되지 않는 예비 환경 폐기: {name}")
             lxc("delete", name, "--force")
             drop_pool(name)
+
+
+def retire_stale_pool():
+    """
+    설정 이미지가 바뀌면 이전 이미지로 만든 미할당 예비를 교체한다(풀 이행).
+
+    배정 예약이 없고 준비가 끝난 예비만 대상이다. 아무도 쓴 적 없는 VM 이라 잃을 작업이 없다.
+    사용자에게 배정된 VM 은 이미지가 달라도 건드리지 않는다. 지문을 모르면 아무것도 지우지 않는다.
+    """
+    with LOCK:
+        spares = [p["instance"] for p in STATE["pool"] if p.get("ready") and not p.get("claim")]
+    for name in spares:
+        if not stale_spare(name):
+            continue
+        with LOCK:
+            entry = next((p for p in STATE["pool"] if p["instance"] == name), None)
+            if not entry or not entry.get("ready") or entry.get("claim"):
+                continue
+            STATE["pool"].remove(entry)
+            save_state()
+        log(f"이전 이미지의 예비 환경 교체: {name}")
+        lxc("delete", name, "--force", timeout=300)
 
 
 def fill_pool():
@@ -163,6 +185,7 @@ def tick():
     enforce_isolation()   # 브리지 격리 — 새로 뜬 VM 의 포트를 놓치지 않도록 매번 확인
     reclaim_orphans()
     heal_pool()
+    retire_stale_pool()
     fill_pool()
     collect_running()
     idle_stop()

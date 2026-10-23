@@ -31,7 +31,7 @@ from .util import log
 CATALOG_PATH = os.path.join(paths.CODE_DIR, 'knowledge', 'v2', 'catalog.json')
 HTTP = {'conflict': 409, 'busy': 409, 'bundle_mismatch': 409, 'recovery_required': 409,
         'cancel_failed': 409, 'interrupted': 409, 'unsupported_action': 409, 'invalid_request': 400,
-        'runner_missing': 410, 'runner_error': 502, 'no_environment': 409, 'failed': 200}
+        'runner_missing': 410, 'runner_error': 502, 'no_environment': 409, 'failed': 200, 'paused': 503}
 _POOL = ThreadPoolExecutor(max_workers=4, thread_name_prefix='lesson-job')
 
 
@@ -55,6 +55,11 @@ def lesson_of(pack, name):
 
 def step_of(lesson, step_id):
     return next((s for s in lesson['steps'] if s['id'] == step_id), None)
+
+
+def paused():
+    """Emergency stop (config `lessons_paused`): no new lesson work is accepted. Reading stays available."""
+    return bool(CONFIG.get('lessons_paused'))
 
 
 def shared(account):
@@ -106,6 +111,8 @@ def environment_view(status):
     env['failure'] = dict(stage=failure.get('stage')) if failure else None
     env['bundles_current'] = {pack: status.get('installed', {}).get(pack) == entry['bundle']['revision']
                               for pack, entry in CATALOG['packs'].items()}
+    env['path'] = 'runner'          # this VM answers the lesson protocol; v1 VMs get 410 with path 'legacy'
+    env['paused'] = paused()
     return env
 
 
@@ -146,6 +153,8 @@ def runner_request(action, lesson, step_id, request_id, expected):
 def submit(account, action, lesson, step_id, body):
     """Admit a job (deduplicated by request_id) and run it in the background. Returns (http, obj)."""
     request_id, expected = _request_id(body), _expected(body)
+    if paused():
+        raise progress.Refused('paused', '운영자가 단계형 실습 접수를 잠시 멈췄습니다. 터미널은 그대로 쓸 수 있습니다.', 503)
     if action == 'check':
         step = step_of(lesson, step_id)
         if not step or step['kind'] != 'task':
@@ -200,7 +209,10 @@ def _run(account, instance, lesson, request, job_id):
 # ─────────────────────────────── entry points ───────────────────────────────
 
 def _fail(exc):
-    return exc.http, dict(ok=False, error=exc.code, message=exc.message)
+    body = dict(ok=False, error=exc.code, message=exc.message)
+    if exc.code == 'runner_missing':
+        body['path'] = 'legacy'        # terminal, tutor and v1 checks keep working on this VM
+    return exc.http, body
 
 
 def handle_get(account, seg):

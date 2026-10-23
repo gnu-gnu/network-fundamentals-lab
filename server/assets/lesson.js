@@ -76,11 +76,12 @@
     if(env.state==='recovery_required') notes.push(RECOVERY[(env.recovery||{}).reason]||'복구가 필요합니다.');
     if(env.failure&&env.failure.stage) notes.push(env.failure.stage+' 단계에서 실패했습니다. 다시 시작하거나 종료하세요.');
     if(env.state==='running'&&env.runtime&&env.runtime.matches===false) notes.push('터미널에서 실습이 바뀌었습니다. 다시 시작하면 이 실습으로 맞춥니다.');
+    if(env.paused) notes.push('운영자가 단계형 실습 접수를 잠시 멈췄습니다. 터미널은 그대로 쓸 수 있습니다.');
     if(st.shared) notes.push('공용 환경입니다. 다른 방문자가 실습을 바꿀 수 있고 개인 완료 기록에 남지 않습니다.');
     if(a&&a.origin==='adopted_cli') notes.push('터미널에서 시작한 실습을 다시 배포하지 않고 이어 받았습니다.');
     $('lessonnote').innerHTML=notes.map(n=>'<div>'+esc(n)+'</div>').join('');
     $('lessonnote').hidden=!notes.length;
-    const busy=working||(st.jobs&&st.jobs.length>0)||['starting','resetting','stopping','recovering'].includes(env.state);
+    const busy=working||env.paused||(st.jobs&&st.jobs.length>0)||['starting','resetting','stopping','recovering'].includes(env.state);
     const can={
       start:current&&['idle','running','start_failed','reset_failed'].includes(env.state),
       reset:current&&mine&&(['running','reset_failed'].includes(env.state)||allowed.includes('reset')),
