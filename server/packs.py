@@ -21,8 +21,29 @@ LESSONS = {lesson['id']: lesson for lesson in _DATA['lessons']}
 REVISION = _DATA['revision']
 
 
+ALIAS_PACK = 'network'   # v1 lesson ids ('12', '17-ospf') are aliases of this pack's lessons only
+
+
+def canonical(identifier):
+    """Canonical lesson id '<pack>/<lesson>' for a v1 id or an already canonical id, else None."""
+    if not isinstance(identifier, str):
+        return None
+    if '/' in identifier:
+        pack, _, local = identifier.partition('/')
+        item = LESSONS.get(local)
+        return identifier if item and item['pack'] == pack else None
+    item = LESSONS.get(identifier)
+    return f"{item['pack']}/{identifier}" if item and item['pack'] == ALIAS_PACK else None
+
+
 def lesson(identifier):
-    return LESSONS.get(identifier) if isinstance(identifier, str) else None
+    """v1 lesson metadata by v1 id or canonical id (tutor DB keeps v1 ids; aliases resolve on read)."""
+    if not isinstance(identifier, str):
+        return None
+    if '/' in identifier:
+        name = canonical(identifier)
+        return LESSONS.get(name.partition('/')[2]) if name else None
+    return LESSONS.get(identifier)
 
 
 def pack_of(lesson):

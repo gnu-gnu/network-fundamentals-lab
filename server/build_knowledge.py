@@ -21,6 +21,7 @@ import runtimes  # noqa: E402
 
 CORPUS = SERVER / 'knowledge/corpus.json'
 PACKS = SERVER / 'knowledge/packs.json'
+CATALOG_V2 = SERVER / 'knowledge/v2/catalog.json'   # learning pack v2 (pack_format, M1 pilot lessons)
 ASSESSMENTS = ('fault', 'observe', 'exploration')
 ID_RE = re.compile(r'^[a-z0-9][a-z0-9-]{0,39}$')
 
@@ -35,13 +36,15 @@ def text_list(value, where, name):
     return list(value)
 
 
-def manifests():
-    found = [ROOT / 'pack.toml'] + sorted((ROOT / 'packs').glob('*/pack.toml'))
+def manifests(root=None):
+    root = root or ROOT
+    found = [root / 'pack.toml'] + sorted((root / 'packs').glob('*/pack.toml'))
     return [p for p in found if p.is_file() and not p.is_symlink()]
 
 
-def load_pack(manifest):
-    where = manifest.relative_to(ROOT).as_posix()
+def load_pack(manifest, root=None):
+    root = root or ROOT
+    where = manifest.relative_to(root).as_posix()
     data = tomllib.loads(manifest.read_text())
     for key in ('id', 'title', 'runtime'):
         if not isinstance(data.get(key), str) or not data[key]:
@@ -57,9 +60,9 @@ def load_pack(manifest):
         synonyms.append(dict(match=item['match'], terms=text_list(item['terms'], where, 'synonym terms')))
     for pattern in tutor.get('redact', []):
         re.compile(pattern)
-    root = manifest.parent.relative_to(ROOT).as_posix()
+    base = manifest.parent.relative_to(root).as_posix()
     return dict(id=data['id'], title=data['title'], runtime=data['runtime'],
-                order=int(data.get('order', 100)), root='' if root == '.' else root,
+                order=int(data.get('order', 100)), root='' if base == '.' else base,
                 files=dict(guide=files.get('guide', 'README.md'),
                            solution=files.get('solution', 'WALKTHROUGH.md'),
                            definition=text_list(files.get('definition', []), where, 'files.definition'),
@@ -104,8 +107,9 @@ def probe_item(item, where):
     return dict(label=item['label'], node=node, argv=text_list(item.get('argv'), where, 'probe argv'))
 
 
-def load_lessons(pack, directory, seen):
-    where = (directory / 'lesson.toml').relative_to(ROOT).as_posix()
+def load_lessons(pack, directory, seen, root=None):
+    root = root or ROOT
+    where = (directory / 'lesson.toml').relative_to(root).as_posix()
     data = tomllib.loads((directory / 'lesson.toml').read_text())
     entries = data.pop('lessons', None)
     if entries is not None and (not isinstance(entries, list) or not entries):
@@ -130,7 +134,7 @@ def load_lessons(pack, directory, seen):
             fail(where, f'{lesson_id}: fault lessons need a fault description and checks')
         number = item.get('number', directory.name[:2] if directory.name[:2].isdigit() else '')
         lesson = dict(id=lesson_id, pack=pack['id'], runtime=pack['runtime'], number=str(number),
-                      dir=directory.relative_to(ROOT).as_posix(), title=item['title'],
+                      dir=directory.relative_to(root).as_posix(), title=item['title'],
                       concept=item['concept'], goal=item['goal'], fault=item.get('fault', ''),
                       assessment=assessment, topics=text_list(item.get('topics', []), where, 'topics'),
                       hints=text_list(item.get('hints', []), where, 'hints'), checks=checks,
@@ -147,17 +151,18 @@ def load_lessons(pack, directory, seen):
     return lessons
 
 
-def load_all():
+def load_all(root=None):
+    root = root or ROOT
     packs, lessons, seen = [], [], set()
-    for manifest in manifests():
-        pack = load_pack(manifest)
+    for manifest in manifests(root):
+        pack = load_pack(manifest, root)
         if any(p['id'] == pack['id'] for p in packs):
-            fail(manifest.relative_to(ROOT).as_posix(), 'duplicate pack id')
+            fail(manifest.relative_to(root).as_posix(), 'duplicate pack id')
         packs.append(pack)
         for lesson_file in sorted(manifest.parent.glob('*/lesson.toml')):
             if lesson_file.is_symlink() or lesson_file.parent.is_symlink():
-                fail(lesson_file.relative_to(ROOT).as_posix(), 'symlinks are not allowed')
-            lessons.extend(load_lessons(pack, lesson_file.parent, seen))
+                fail(lesson_file.relative_to(root).as_posix(), 'symlinks are not allowed')
+            lessons.extend(load_lessons(pack, lesson_file.parent, seen, root))
     packs.sort(key=lambda p: (p['order'], p['id']))
     return packs, lessons
 
@@ -223,7 +228,10 @@ def main():
     parser.add_argument('--check', action='store_true')
     args = parser.parse_args()
     expected_packs, expected_corpus = build()
-    stale = [str(p) for p, expected in ((PACKS, expected_packs), (CORPUS, expected_corpus))
+    import pack_format
+    expected_catalog = pack_format.build(ROOT)
+    outputs = ((PACKS, expected_packs), (CORPUS, expected_corpus), (CATALOG_V2, expected_catalog))
+    stale = [str(p) for p, expected in outputs
              if not p.is_file() or json.loads(p.read_text()) != expected]
     if args.check:
         if stale:
@@ -233,8 +241,13 @@ def main():
         PACKS.parent.mkdir(exist_ok=True)
         PACKS.write_text(json.dumps(expected_packs, ensure_ascii=False, indent=2) + '\n')
         CORPUS.write_text(json.dumps(expected_corpus, ensure_ascii=False, indent=2) + '\n')
+        # Write next to the target and rename, so a reader never sees a half-written catalog.
+        CATALOG_V2.parent.mkdir(exist_ok=True)
+        staging = CATALOG_V2.with_suffix('.json.tmp')
+        staging.write_text(json.dumps(expected_catalog, ensure_ascii=False, indent=2) + '\n')
+        staging.replace(CATALOG_V2)
         print(f'Built {len(expected_packs["lessons"])} lessons in {len(expected_packs["packs"])} pack(s), '
-              f'{len(expected_corpus["documents"])} documents')
+              f'{len(expected_corpus["documents"])} documents, {len(expected_catalog["lessons"])} v2 lesson(s)')
 
 
 if __name__ == '__main__':

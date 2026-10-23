@@ -1,0 +1,280 @@
+{
+  "format": 1,
+  "packs": {
+    "network": {
+      "id": "network",
+      "title": "네트워크 기초",
+      "revision": "aed59a5bf6afe86e881e7c3246700109c179405f27cf944722275dbc3a4cc552",
+      "lessons": [
+        "network/12"
+      ],
+      "bundle": {
+        "revision": "4012ee0cdc947a2a941ff71a4aae9c12285443991b578f59437fb3ff4cd54943",
+        "recipe": {
+          "format": 1,
+          "protocol": {
+            "min": 1,
+            "max": 1
+          },
+          "pack": "network",
+          "lessons": {
+            "network/12": {
+              "dir": "12-mtu-pmtud",
+              "runtime": "containerlab",
+              "definition": "12-mtu-pmtud.clab.yml",
+              "prefix": "clab-12-mtu-pmtud",
+              "nodes": [
+                "h1",
+                "r1",
+                "r2",
+                "h2"
+              ],
+              "timeouts": {
+                "setup": 300,
+                "teardown": 180,
+                "check": 30
+              },
+              "steps": {
+                "verify": {
+                  "check": {
+                    "all": [
+                      {
+                        "node": "h1",
+                        "argv": [
+                          "ping",
+                          "-M",
+                          "do",
+                          "-c1",
+                          "-W2",
+                          "-s",
+                          "1472",
+                          "10.12.2.10"
+                        ],
+                        "expect": {
+                          "regex": "mtu\\s*[= ]\\s*1400"
+                        },
+                        "timeout": 30,
+                        "fallback": {
+                          "node": "h1",
+                          "argv": [
+                            "ip",
+                            "route",
+                            "get",
+                            "10.12.2.10"
+                          ],
+                          "expect": {
+                            "regex": "\\bmtu\\s+1400\\b",
+                            "stream": "stdout",
+                            "rc": [
+                              0
+                            ]
+                          },
+                          "timeout": 12,
+                          "label": "PMTU route cache"
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              "probes": {
+                "probe-1": {
+                  "node": "r1",
+                  "argv": [
+                    "nft",
+                    "list",
+                    "ruleset"
+                  ]
+                },
+                "probe-2": {
+                  "node": "h1",
+                  "argv": [
+                    "ip",
+                    "route",
+                    "get",
+                    "10.12.2.10"
+                  ]
+                },
+                "probe-3": {
+                  "node": "r1",
+                  "argv": [
+                    "ip",
+                    "-br",
+                    "link"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "files": [
+          {
+            "path": "12-mtu-pmtud/12-mtu-pmtud.clab.yml",
+            "sha256": "0c1e56d09ba4440714f6435d3496ce0d389b6902d1ba076b7bd5d92d7c6496db",
+            "exec": false
+          },
+          {
+            "path": "12-mtu-pmtud/README.md",
+            "sha256": "8e25bad3f8af3707d16246448337e4334451e3c75ca89ef4faac129100421350",
+            "exec": false
+          },
+          {
+            "path": "12-mtu-pmtud/WALKTHROUGH.md",
+            "sha256": "2033b9c67e898e94994641225ea17f4298a133f2d7ed76e15517312e89e4bde9",
+            "exec": false
+          },
+          {
+            "path": "12-mtu-pmtud/fix.sh",
+            "sha256": "607e48ca5216ffa3faa2cf833dc6a3a53a4db596cda6e6722f33bfa728d7a3fb",
+            "exec": true
+          }
+        ]
+      },
+      "unverified_references": []
+    }
+  },
+  "lessons": {
+    "network/12": {
+      "id": "network/12",
+      "pack": "network",
+      "lesson": "12",
+      "aliases": [
+        "12"
+      ],
+      "title": "12장 MTU와 PMTUD",
+      "number": "12",
+      "dir": "12-mtu-pmtud",
+      "assessment": "fault",
+      "completion": "required-steps",
+      "guide": "12-mtu-pmtud/README.md",
+      "solution": "12-mtu-pmtud/WALKTHROUGH.md",
+      "environment": {
+        "runtime": "containerlab",
+        "definition": "12-mtu-pmtud.clab.yml",
+        "prefix": "clab-12-mtu-pmtud",
+        "nodes": [
+          "h1",
+          "r1",
+          "r2",
+          "h2"
+        ],
+        "timeouts": {
+          "setup": 300,
+          "teardown": 180,
+          "check": 30
+        }
+      },
+      "steps": [
+        {
+          "id": "guide",
+          "kind": "read",
+          "required": false,
+          "title": "실습 안내",
+          "text": "12-mtu-pmtud/README.md"
+        },
+        {
+          "id": "verify",
+          "kind": "task",
+          "required": true,
+          "title": "목표 달성 확인",
+          "goal": "큰 DF 패킷에 MTU 통보를 받고 경로 MTU를 학습한다. 큰 ping 자체의 성공을 요구하지 않는다.",
+          "hints": [
+            "관찰 결과를 근거로 원인을 좁혀 보세요.",
+            "양 끝의 설정과 왕복 경로를 비교해 보세요.",
+            "정상 조건과 실제 상태의 차이를 확인하세요."
+          ],
+          "check": {
+            "all": [
+              {
+                "node": "h1",
+                "argv": [
+                  "ping",
+                  "-M",
+                  "do",
+                  "-c1",
+                  "-W2",
+                  "-s",
+                  "1472",
+                  "10.12.2.10"
+                ],
+                "expect": {
+                  "regex": "mtu\\s*[= ]\\s*1400"
+                },
+                "timeout": 30,
+                "fallback": {
+                  "node": "h1",
+                  "argv": [
+                    "ip",
+                    "route",
+                    "get",
+                    "10.12.2.10"
+                  ],
+                  "expect": {
+                    "regex": "\\bmtu\\s+1400\\b",
+                    "stream": "stdout",
+                    "rc": [
+                      0
+                    ]
+                  },
+                  "timeout": 12,
+                  "label": "PMTU route cache"
+                }
+              }
+            ]
+          },
+          "test": {
+            "initial": "fail",
+            "solved": "pass"
+          }
+        }
+      ],
+      "tutor": {
+        "concept": "PMTUD는 DF 패킷의 ICMP fragmentation-needed 피드백으로 경로 MTU를 학습한다. 피드백 차단 시 큰 패킷만 조용히 실패할 수 있다.",
+        "goal": "큰 DF 패킷에 MTU 통보를 받고 경로 MTU를 학습한다. 큰 ping 자체의 성공을 요구하지 않는다.",
+        "fault": "r1의 ICMP frag-needed 차단. 중간 링크 MTU 1400을 발신자가 알 수 없다.",
+        "topics": [
+          "MTU",
+          "PMTUD",
+          "단편"
+        ],
+        "probes": [
+          {
+            "id": "probe-1",
+            "label": "r1 차단 규칙",
+            "node": "r1",
+            "argv": [
+              "nft",
+              "list",
+              "ruleset"
+            ]
+          },
+          {
+            "id": "probe-2",
+            "label": "h1 경로 MTU",
+            "node": "h1",
+            "argv": [
+              "ip",
+              "route",
+              "get",
+              "10.12.2.10"
+            ]
+          },
+          {
+            "id": "probe-3",
+            "label": "r1 링크 MTU",
+            "node": "r1",
+            "argv": [
+              "ip",
+              "-br",
+              "link"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "aliases": {
+    "12": "network/12"
+  },
+  "revision": "afca0793a5c774f80b10d6e75922de837433c4d2d4d2b4734d03d8b85305c9d5"
+}
