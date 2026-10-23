@@ -77,19 +77,24 @@
     if(env.failure&&env.failure.stage) notes.push(env.failure.stage+' 단계에서 실패했습니다. 다시 시작하거나 종료하세요.');
     if(env.state==='running'&&env.runtime&&env.runtime.matches===false) notes.push('터미널에서 실습이 바뀌었습니다. 다시 시작하면 이 실습으로 맞춥니다.');
     if(st.shared) notes.push('공용 환경입니다. 다른 방문자가 실습을 바꿀 수 있고 개인 완료 기록에 남지 않습니다.');
+    if(a&&a.origin==='adopted_cli') notes.push('터미널에서 시작한 실습을 다시 배포하지 않고 이어 받았습니다.');
     $('lessonnote').innerHTML=notes.map(n=>'<div>'+esc(n)+'</div>').join('');
     $('lessonnote').hidden=!notes.length;
     const busy=working||(st.jobs&&st.jobs.length>0)||['starting','resetting','stopping','recovering'].includes(env.state);
     const can={
       start:current&&['idle','running','start_failed','reset_failed'].includes(env.state),
       reset:current&&mine&&(['running','reset_failed'].includes(env.state)||allowed.includes('reset')),
-      stop:mine&&(['running','start_failed','reset_failed','stop_failed'].includes(env.state)||allowed.includes('stop'))};
+      stop:mine&&(['running','start_failed','reset_failed','stop_failed'].includes(env.state)||allowed.includes('stop')),
+      solve:current&&mine&&env.state==='running'&&env.ready&&lesson&&lesson.solvable};
     $('lessonstart').disabled=busy||!can.start||!selected;
     $('lessonreset').disabled=busy||!can.reset;
     $('lessonstop').disabled=busy||!can.stop;
+    $('lessonsolve').hidden=!(lesson&&lesson.solvable);
+    $('lessonsolve').disabled=busy||!can.solve;
     const done=a&&a.completed_at;
     $('lessondone').hidden=!done;
-    if(done) $('lessondone').textContent='완료했습니다 ('+a.completed_at.replace('T',' ').slice(0,16)+'). 초기화하거나 종료해도 완료 기록은 남습니다.';
+    if(done) $('lessondone').textContent=(a.assisted?'해설 적용 후 완료했습니다':'완료했습니다')+' ('+a.completed_at.replace('T',' ').slice(0,16)+'). 초기화하거나 종료해도 완료 기록은 남습니다.';
+    else if(a&&a.assisted){ $('lessondone').hidden=false; $('lessondone').textContent='해설을 적용했습니다. 확인 버튼으로 결과를 확인하세요. 완료 기록에는 해설 적용 후 완료로 남습니다.'; }
     renderSteps(busy,current,mine&&env.state==='running'&&env.ready&&a);
   }
 
@@ -109,6 +114,7 @@
         h+='<button type=button class=lesson-small data-view="'+esc(step.id)+'"'+((!a||s==='done')?' disabled':'')+'>읽음 표시</button>';
       }else if(step.kind==='task'){
         h+='<p class=d>'+esc(step.goal||'')+'</p>';
+        if(step.html) h+='<details data-key="task-'+esc(step.id)+'"><summary>단계 설명</summary><div class=lesson-body>'+step.html+'</div></details>';
         h+='<div class=lesson-row><button type=button class=primary data-check="'+esc(step.id)+'"'+((busy||!checkable||!current)?' disabled':'')+'>확인</button>';
         const opened=((a&&a.hints_opened)||{})[step.id]||[];
         if(step.hints) h+='<button type=button data-hint="'+esc(step.id)+'"'+((!a||opened.length>=step.hints)?' disabled':'')+'>힌트 '+opened.length+'/'+step.hints+'</button>';
@@ -117,7 +123,7 @@
         if(last&&last.items&&last.items.length){
           h+='<details data-key="items-'+esc(step.id)+'"><summary>마지막 확인 결과'+(last.stale?' · 반영되지 않음(환경이 바뀜)':'')+'</summary>'+
             last.items.map(it=>'<div class=lesson-item><b>'+esc(it.node)+'</b> · '+esc(STATUS[it.result]||it.result)+(it.fallback_used?' · 보조 확인':'')+
-            '<pre>'+esc(it.detail)+'</pre></div>').join('')+'</details>';
+            (it.message?'<div>'+esc(it.message)+'</div>':'')+'<pre>'+esc(it.detail)+'</pre></div>').join('')+'</details>';
         }
       }
       li.innerHTML=h; list.appendChild(li);
@@ -154,16 +160,29 @@
       let r=await api(path,body);
       if(r.status===410){ panel.hidden=true; return; }
       if(r.status!==202&&r.status!==200){ say(r.body.message||('요청이 거절되었습니다 ('+r.status+').')); return; }
-      let j=r.body;
-      while(j.state==='queued'||j.state==='running'){
-        say(label+' 진행 중…');
-        await new Promise(res=>setTimeout(res,1200));
-        const p=await api('lesson/jobs/'+j.job_id);
-        if(p.status!==200){ say('작업 상태를 확인하지 못했습니다.'); return; }
-        j=p.body;
-      }
-      say(describe(label,j));
+      await follow(r.body,label);
     }catch(e){ say('연결에 실패했습니다. 상태를 새로 확인하세요.'); }
+    finally{ working=false; await load(); }
+  }
+
+  // Poll a job to its end. Also used after a page reload to pick up work that is still running.
+  async function follow(j,label){
+    while(j.state==='queued'||j.state==='running'){
+      say(label+' 진행 중…');
+      await new Promise(res=>setTimeout(res,1200));
+      const p=await api('lesson/jobs/'+j.job_id);
+      if(p.status!==200){ say('작업 상태를 확인하지 못했습니다.'); return; }
+      j=p.body;
+    }
+    say(describe(label,j));
+  }
+  const LABEL={start:'시작',reset:'초기화',stop:'종료',solve:'해설 적용',check:'확인'};
+  async function resume(){
+    if(working||!st||!st.jobs||!st.jobs.length) return;
+    const pending=st.jobs[0];
+    working=true; render(); say('진행 중인 '+(LABEL[pending.action]||pending.action)+' 작업을 이어서 확인합니다…');
+    try{ await follow({job_id:pending.job_id,state:pending.state},LABEL[pending.action]||pending.action); }
+    catch(e){ say('작업 상태를 확인하지 못했습니다.'); }
     finally{ working=false; await load(); }
   }
 
@@ -179,8 +198,10 @@
       const s=run.result.status;
       if(pr.stale) return '확인하는 사이 환경이 바뀌어 이 결과는 반영하지 않았습니다.';
       if(pr.completed_now) return '통과! 실습을 완료했습니다.';
-      return '확인 결과: '+(STATUS[s]||s);
+      const msg=(run.result.items||[]).map(it=>it.message).filter(Boolean).join(' ');
+      return '확인 결과: '+(STATUS[s]||s)+(msg?' — '+msg:'');
     }
+    if(label==='해설 적용') return '해설을 적용했습니다. 확인 버튼으로 다시 확인하세요.';
     return label+' 완료';
   }
 
@@ -189,9 +210,10 @@
     const env=st.environment;
     const msg={start:(env.lesson&&env.lesson!==selected)?'지금 실습을 종료하고 새 실습을 시작합니다. 컨테이너 안의 변경 사항은 사라집니다.':null,
       reset:'실습 토폴로지를 처음 상태로 다시 만듭니다. 컨테이너 안의 변경 사항은 사라집니다.',
-      stop:'실습 토폴로지를 철거합니다. 컨테이너 안의 변경 사항은 사라집니다.'}[action];
+      stop:'실습 토폴로지를 철거합니다. 컨테이너 안의 변경 사항은 사라집니다.',
+      solve:'해설을 실습 환경에 적용합니다. 이 회차의 완료 기록에는 해설 적용 후 완료로 남습니다.'}[action];
     if(msg&&!confirm(msg)) return;
-    const label={start:'시작',reset:'초기화',stop:'종료'}[action];
+    const label=LABEL[action];
     job('lesson/'+selected+'/'+action,{request_id:uuid(),expected:env.observed},label);
   }
 
@@ -218,6 +240,7 @@
   $('lessonstart').onclick=()=>{ if(allowed('#lessonstart')) act('start'); };
   $('lessonreset').onclick=()=>{ if(allowed('#lessonreset')) act('reset'); };
   $('lessonstop').onclick=()=>{ if(allowed('#lessonstop')) act('stop'); };
+  $('lessonsolve').onclick=()=>{ if(allowed('#lessonsolve')) act('solve'); };
   $('lessonpick').onchange=e=>{ selected=e.target.value; lesson=null; load(); };
   $('lessonrefresh').onclick=()=>load();
 
@@ -234,7 +257,7 @@
   }
   function tick(){
     if(Date.now()<missingUntil) return;
-    if(running()&&!document.hidden&&!working) load().then(reloadHints);
+    if(running()&&!document.hidden&&!working) load().then(reloadHints).then(resume);
     else if(!running()){ panel.hidden=true; }
   }
   setTimeout(tick,600);
