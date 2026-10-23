@@ -14,6 +14,7 @@ Netlab은 이 저장소의 네트워크 트러블슈팅 실습을 웹으로 제�
 - [실습 콘텐츠와 챕터 목록](README.md)
 - [상세 설치·업데이트·백업 안내](server/README.md)
 - [운영 참고 문서](server/OPERATIONS.md) — 기존 인증 기반 운영 환경의 사례 포함
+- [학습 팩 v2 구현 절차](docs/PACK_IMPLEMENTATION_PROCEDURE.md) · [구현 계약](docs/PACK_IMPLEMENTATION_CONTRACTS.md) — 개발 계획이며 구현 완료 기능 목록은 아닙니다.
 
 ## 제공하는 기능
 
