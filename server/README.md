@@ -315,9 +315,9 @@ python3 server/deploy.py --source-check
 기본 장 자료 외 추가 검색 절 수(기본 4, 1~6)다. 한국어는 형태소 분석 없는 키워드 검색과
 개념 별칭을 사용하므로 질문에 따라 검색 누락이 있을 수 있다.
 
-#### 학습 팩 v2 시범(M1)
+#### 학습 팩 v2 시범(M1·M2)
 
-12장 하나를 단계형 실습으로 제공하는 시범 경로다. 계약은 [구현 계약](../docs/PACK_IMPLEMENTATION_CONTRACTS.md),
+03·12·17(OSPF/BGP)장과 shell 예제 팩(`packs/example-shell`)을 단계형 실습으로 제공하는 시범 경로다. 계약은 [구현 계약](../docs/PACK_IMPLEMENTATION_CONTRACTS.md),
 순서는 [구현 절차](../docs/PACK_IMPLEMENTATION_PROCEDURE.md)를 따른다. `build_knowledge.py`가 v1 데이터와 함께
 `knowledge/v2/catalog.json`을 만들고, 학습자 VM 안의 `netlab-runner`가 레슨을 실행한다. runner가 없는 VM(현재의
 모든 운영 VM)에서는 패널의 단계형 실습 영역이 보이지 않고 기존 화면과 같다.
@@ -326,10 +326,15 @@ python3 server/deploy.py --source-check
 VM은 labd가 관리하는 미할당 예비 VM이며 `user.netlab.verify=true` 라벨이 있어야 한다.
 
 ```bash
-python3 server/packctl.py bundle --pack network --out network-bundle.tar     # 저장소에서
-sudo python3 /opt/netlab-admin/packctl.py install --instance <VM> --bundle network-bundle.tar   # 개발 서버에서
-sudo python3 server/tests/integration_lesson_v2.py --account <테스트 계정> [--with-cli] [--with-reboot]
+python3 server/packctl.py bundle --pack network --out network-bundle.tar          # 저장소에서
+python3 server/packctl.py bundle --pack example-shell --out shell-bundle.tar
+sudo python3 /opt/netlab-admin/packctl.py install --instance <VM> \
+    --bundle network-bundle.tar --bundle shell-bundle.tar                        # 개발 서버에서
+sudo python3 server/tests/integration_lesson_v2.py --account <테스트 계정> [--with-cli] [--with-reboot] [--m2]
 ```
+
+runner가 있는 VM의 터미널에서는 `lab 12`, `lab 17 ospf`가 runner로 시작되고 웹 패널이 그 실습을 이어 받는다.
+`lab check`는 참고용 확인이며 학습 기록은 웹의 확인 버튼으로만 남는다.
 
 운영 서버에는 이 설치 명령을 쓰지 않는다. 운영 반영은 runner를 담은 이미지로 하며(M3) 승인 후 진행한다.
 

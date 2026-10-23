@@ -220,6 +220,23 @@ M1 구현(12장 파일럿)에서 위 계약을 구체화한 값입니다. 계약
 
 M1의 개발 설치는 clean 스냅샷을 만든 뒤에 runner를 넣습니다. 그래서 그 VM을 초기화하면 runner도 사라져 410이 됩니다. runner를 스냅샷 전에 담는 이미지 배포는 M3 범위입니다.
 
+## M2 구현에서 확정한 세부
+
+| 항목 | 정한 값 |
+| --- | --- |
+| 호환 레슨의 solve | 레슨 디렉터리의 `fix.sh`가 solve 훅입니다. 실행 비트가 없으면 빌드 오류입니다. 세대를 올리고, 실패해도 레슨은 running으로 두며 실패 단계를 보입니다 |
+| 도움 사용 기록 | 미완료 회차에서 solve가 시도되면 성공 여부와 관계없이 `assisted`로 남습니다. 이미 기록된 완료 이벤트의 값은 바꾸지 않습니다 |
+| 레슨 전환 순서 | 이전 레슨 teardown → containerlab 전체 철거(터미널에서 띄운 토폴로지 포함) → 새 레슨 up → setup → inject. 이전 레슨을 정리하지 못하면 이전 레슨의 `stop_failed`로 남고 새 레슨은 시작하지 않습니다 |
+| `host` 노드 | 학습자 VM 자체입니다. v1의 노드 없는 진단은 `host`로 옮겼습니다 |
+| shell 런타임 | 배포물이 없고 훅이 환경을 준비합니다. VM 재부팅 뒤에도 준비 완료 표식이 있으면 running으로 이어 갑니다 |
+| 작업 사본 | network 팩은 `~lab/network-lab/<dir>`, 그 밖의 팩은 `~lab/labs/<pack>/<레슨 디렉터리>`입니다 |
+| 스크립트 check | 번들의 스크립트를 root로, 작업 사본을 cwd로 실행합니다. `$NETLAB_RESULT`는 4KiB 이하 JSON만 읽고 message는 2KiB로 자릅니다 |
+| CLI | runner가 있는 VM에서 `lab <장> [변형]`은 runner start, `lab check`는 참고용, `lab reset`은 runner reset입니다. 등록되지 않은 실습은 runner 실습을 먼저 내린 뒤 기존 방식으로 띄웁니다. runner가 없는 VM은 기존 동작입니다 |
+| 이어 받기 | 상태 동기화에서 실행 중인 레슨에 열린 회차가 없으면 `adopted_cli` 회차를 만듭니다. runner start는 호출하지 않습니다 |
+| 튜터 | runner가 있는 VM에서는 레슨·세대·단계를 runner와 회차에서 얻고, 등록된 probe ID만 runner로 실행합니다. 튜터의 check는 진단이며 진행 기록에 남기지 않습니다. 답하는 사이 환경이 바뀌면 이전 환경 기준이라는 안내를 붙입니다 |
+| format 2 범위 | read·task 단계, argv·script·all 검증, 훅 5종, probe를 지원합니다. quiz·reflect·탭은 해당 단계 전까지 오류로 거부합니다 |
+| 개발 설치 | 한 릴리스에 VM이 가질 모든 팩을 담습니다(`--bundle`을 여러 번) |
+
 ## 수용 기준 변경
 
 계약과 테스트는 함께 변경합니다. 최소 수용 대상은 [구현 절차의 M1 수용표](PACK_IMPLEMENTATION_PROCEDURE.md#m1-수용-테스트)입니다. Schema의 정상 사례뿐 아니라 토큰 없는 구형 stop, 추가 argv, 음수 세대, 대상 누락, protocol 위반이 거부되는지 확인합니다. 문서 커밋은 구현 완료나 운영 배포 승인을 의미하지 않습니다.

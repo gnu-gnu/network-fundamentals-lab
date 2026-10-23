@@ -18,7 +18,8 @@ const originalFetch=window.fetch;window.lessonPosts=[];window.lessonMode='normal
 const env={ok:true,state:'running',lesson:'network/12',observed:{incarnation:'20d41a0c-b096-4f66-927e-22152ed8f9ba',generation:3},
  bundle:'b'.repeat(64),ready:true,recovery:null,runtime:{topologies:['12-mtu-pmtud/12-mtu-pmtud.clab.yml'],matches:true},
  check_running:false,capabilities:['status','start','reset','stop','check'],failure:null,bundles_current:{network:true}};
-const lesson={id:'network/12',title:'12장 MTU와 PMTUD',number:'12',completion:'required-steps',revision:'r',bundle:'b'.repeat(64),
+window.lessonJobs=[{job_id:'d'.repeat(32),action:'reset',lesson_id:'network/12',step_id:null,state:'running'}];
+const lesson={id:'network/12',title:'12장 MTU와 PMTUD',number:'12',completion:'required-steps',revision:'r',bundle:'b'.repeat(64),solvable:true,
  steps:[{id:'guide',kind:'read',title:'실습 안내',required:false,html:'<h1 id="L1">12장</h1><p>본문 '+'아주 긴 설명 '.repeat(60)+'</p><pre id="L5"><code><span id="L6">ping -M do -s 1472 -c1 10.12.2.10 '+'x'.repeat(200)+'</span></code></pre><div class="table-scroll"><table><tr><td>'+'긴셀'.repeat(80)+'</td></tr></table></div>'},
         {id:'verify',kind:'task',title:'목표 달성 확인',required:true,goal:'큰 DF 패킷에 MTU 통보를 받는다.',hints:3}]};
 const attempt={attempt_id:'a',lesson_id:'network/12',generation:3,incarnation:env.observed.incarnation,started_at:'2026-10-24T00:00:00+00:00',
@@ -33,7 +34,9 @@ window.fetch=(url,options={})=>{
    if(u.endsWith('/check')) return json(202,{ok:true,job_id:'c'.repeat(32),state:'queued'});
    return json(200,{ok:true});
   }
-  if(u.endsWith('lesson/state')) return json(200,{ok:true,environment:env,catalog:[{id:'network/12',title:lesson.title,number:'12'}],attempt,shared:false,jobs:[]});
+  if(u.endsWith('lesson/state')) return json(200,{ok:true,environment:env,catalog:[{id:'network/12',title:lesson.title,number:'12'}],attempt,shared:false,jobs:window.lessonJobs});
+  if(u.endsWith('lesson/jobs/'+'d'.repeat(32))){ window.lessonJobs=[]; return json(200,{ok:true,job_id:'d'.repeat(32),state:'done',http_status:200,
+    result:{ok:true,runner:{state:'running'},progress:{}}}); }
   if(u.endsWith('lesson/network/12')) return json(200,{ok:true,lesson});
   if(u.includes('lesson/jobs/')) return json(200,{ok:true,job_id:'c'.repeat(32),state:'failed',http_status:409,
     result:{ok:false,error:'conflict',message:'실습 환경이 그사이 바뀌었습니다. 상태를 새로 확인한 뒤 다시 시도하세요.'}});
@@ -48,6 +51,9 @@ await cmd('Page.navigate',{url});
 await wait('typeof refresh==="function"&&document.getElementById("lessonpanel")');
 await wait('!document.getElementById("running").classList.contains("hide")','running view');
 await wait('!document.getElementById("lessonpanel").hidden&&document.querySelectorAll(".lesson-step").length===2','lesson panel rendered');
+// A job still running from before the reload is picked up and followed to its end.
+await wait('document.getElementById("lessonstatus").textContent.includes("초기화 완료")','resumed job');
+assert(await ev('!document.getElementById("lessonsolve").hidden'),'solvable lessons show the solve button');
 await ev('document.querySelector(".lesson-step details").open=true');
 for(const width of [390,768,1024,1366,1920]){
   await cmd('Emulation.setDeviceMetricsOverride',{width,height:900,deviceScaleFactor:1,mobile:width<600});
