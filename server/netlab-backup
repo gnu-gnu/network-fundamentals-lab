@@ -1,0 +1,409 @@
+#!/usr/bin/env python3
+"""Encrypted Netlab backup and restore to an empty, provisioned host (root only)."""
+import argparse
+import fcntl
+import getpass
+import hashlib
+import json
+import os
+from pathlib import Path, PurePosixPath
+import re
+import shutil
+import stat
+import subprocess
+import tarfile
+import tempfile
+import time
+
+PATHS = ('etc/netlab', 'var/lib/netlab', 'etc/nginx/sites-available/netlab')
+NAME = re.compile(r'^netlab-[a-f0-9]{10}$')
+
+
+def run(*cmd):
+    try:
+        return subprocess.run(cmd, check=True, capture_output=True, text=True).stdout.strip()
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError(f'{cmd[0]} {cmd[1] if len(cmd) > 1 else ""} failed (exit {exc.returncode}); inspect service/LXD logs') from exc
+
+
+def read(path):
+    return json.loads(Path(path).read_text())
+
+
+def write(path, obj):
+    Path(path).write_text(json.dumps(obj, indent=2) + '\n')
+    Path(path).chmod(0o600)
+
+
+def digest(path):
+    h = hashlib.sha256()
+    with open(path, 'rb') as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b''):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def instances(state):
+    records = list(state.get('users', {}).values()) + state.get('pool', [])
+    names = [r['instance'] for r in records if r.get('instance')]
+    if len(names) != len(set(names)) or any(not NAME.fullmatch(n) for n in names):
+        raise RuntimeError('Invalid/duplicate managed instance names')
+    return sorted(names)
+
+
+def query(path):
+    return json.loads(run('lxc', 'query', '/1.0/' + path))
+
+
+def infrastructure(cfg):
+    profile = cfg.get('profile', 'default')
+    if not re.fullmatch(r'[a-zA-Z0-9_-]+', profile):
+        raise RuntimeError('Unsupported profile name')
+    p = query('profiles/' + profile)
+    n = query('networks/lxdbr0')
+    pool = query('storage-pools/labpool')
+    return {'profile': profile, 'profile_config': p['config'], 'devices': p['devices'],
+            'network': {k: n['config'].get(k) for k in ('ipv4.address', 'ipv4.nat', 'ipv6.address')},
+            'storage_driver': pool['driver']}
+
+
+def password(args, confirm=False):
+    if args.passphrase_file:
+        p = Path(args.passphrase_file)
+        s = p.lstat()
+        if not stat.S_ISREG(s.st_mode) or s.st_uid != 0 or s.st_mode & 0o077:
+            raise RuntimeError('Passphrase file must be root-owned regular file, mode 600 or stricter')
+        value = p.read_text().rstrip('\n')
+    else:
+        value = getpass.getpass('Backup passphrase: ')
+        if confirm and value != getpass.getpass('Confirm passphrase: '):
+            raise RuntimeError('Passphrases differ')
+    if len(value) < 12 or '\n' in value or '\r' in value:
+        raise RuntimeError('Use a single-line passphrase of at least 12 characters')
+    return value
+
+
+def crypt(src, dst, secret, home, decrypt=False):
+    cmd = ['gpg', '--homedir', str(home), '--batch', '--no-symkey-cache',
+           '--pinentry-mode', 'loopback', '--passphrase-fd', '0', '--output', str(dst)]
+    cmd += ['--decrypt'] if decrypt else ['--symmetric', '--cipher-algo', 'AES256', '--compress-algo', 'none']
+    result = subprocess.run(cmd + [str(src)], input=secret + '\n', text=True,
+                            capture_output=True)
+    if result.returncode:
+        raise RuntimeError('Encryption/decryption failed (wrong password, damaged archive, or gpg error)')
+
+
+def copy_tree(src, dst):
+    src, dst = Path(src), Path(dst)
+    if src.is_symlink() or dst.is_symlink() or any(p.is_symlink() for p in dst.parents):
+        raise RuntimeError('Symlink source/destination not allowed')
+    if src.is_dir():
+        dst.mkdir(parents=True, exist_ok=True)
+        for child in src.iterdir():
+            copy_tree(child, dst / child.name)
+        shutil.copystat(src, dst)
+    elif src.is_file():
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dst)
+    else:
+        raise RuntimeError(f'Non-regular source: {src}')
+
+
+def create(args, temp, secret):
+    output = Path(args.output).absolute()
+    if output.exists() or output.is_symlink() or not output.parent.is_dir():
+        raise RuntimeError('Output must be a new file in an existing directory')
+    for prefix in PATHS:
+        if output.resolve().is_relative_to(Path('/') / prefix):
+            raise RuntimeError('Output must be outside backed-up directories')
+    cfg = read('/etc/netlab/config.json')
+    infra = infrastructure(cfg)
+    payload = temp / 'payload'
+    payload.mkdir()
+    active = subprocess.run(['systemctl', 'is-active', '--quiet', 'labd']).returncode == 0
+    restarted = []
+    try:
+        run('systemctl', 'stop', 'labd')
+        state = read('/var/lib/netlab/state.json')
+        if any(r.get('status') not in ('running', 'stopped', None) for r in state.get('users', {}).values()):
+            raise RuntimeError('Provisioning or lifecycle operation in progress; retry after it finishes')
+        names = instances(state)
+        running = []
+        if args.mode == 'full':
+            for name in names:
+                info = query('instances/' + name)
+                if info['type'] != 'virtual-machine' or info['status'] not in ('Running', 'Stopped'):
+                    raise RuntimeError(f'Unsupported instance state: {name}')
+                if info.get('profiles', [infra.get('profile')]) != [infra.get('profile')]:
+                    raise RuntimeError(f'Additional LXD profiles are not supported: {name}')
+                for device in info.get('expanded_devices', {}).values():
+                    if device.get('type') == 'disk' and (device.get('path') != '/' or device.get('pool') != 'labpool'):
+                        raise RuntimeError(f'External/custom disk is not supported: {name}')
+                    if device.get('type') not in ('disk', 'nic') or (device.get('type') == 'nic' and device.get('network') != 'lxdbr0'):
+                        raise RuntimeError(f'Custom LXD device is not supported: {name}')
+                if info['status'] == 'Running':
+                    running.append(name)
+                    restarted.append(name)
+                    print('Stopping for consistent backup:', name, flush=True)
+                    run('lxc', 'stop', name, '--timeout', '120')
+            (payload / 'vms').mkdir()
+            for name in names:
+                print('Exporting VM and snapshots:', name, flush=True)
+                run('lxc', 'export', name, str(payload / 'vms' / (name + '.tar.gz')))
+            alias = cfg.get('image', 'netlab')
+            if not re.fullmatch(r'[a-zA-Z0-9_-]+', alias):
+                raise RuntimeError('Only local image aliases are supported')
+            fingerprint = query('images/aliases/' + alias)['target']
+            (payload / 'image').mkdir()
+            run('lxc', 'image', 'export', fingerprint, str(payload / 'image'))
+        for path in PATHS:
+            copy_tree(Path('/') / path, payload / 'files' / path)
+        manifest = {'version': 1, 'mode': args.mode, 'created': time.time(),
+                    'infrastructure': infra, 'instances': names if args.mode == 'full' else [],
+                    'previously_running': running, 'code_sha256': digest('/opt/netlab-admin/labd.py')}
+        if args.mode == 'full':
+            manifest.update(image_alias=alias, image_fingerprint=fingerprint)
+        manifest['sha256'] = {str(p.relative_to(payload)): digest(p)
+                              for p in payload.rglob('*') if p.is_file()}
+        write(payload / 'manifest.json', manifest)
+    finally:
+        errors = []
+        for name in restarted:
+            try:
+                if query('instances/' + name)['status'] == 'Stopped':
+                    run('lxc', 'start', name)
+            except Exception:
+                errors.append(name)
+        if active:
+            run('systemctl', 'start', 'labd')
+        if errors:
+            raise RuntimeError('Backup recovery: manually restart these VMs: ' + ', '.join(errors))
+    print('Source service/VM states restored; sealing encrypted backup', flush=True)
+    size = sum(p.stat().st_size for p in payload.rglob('*') if p.is_file())
+    copies = 3 if temp.stat().st_dev == output.parent.stat().st_dev else 2
+    if shutil.disk_usage(temp).free < size * copies + 256 * 1024**2:
+        raise RuntimeError('Insufficient staging space for tar and encryption; choose --work-dir on a larger disk')
+    tarpath = temp / 'backup.tar'
+    with tarfile.open(tarpath, 'w') as tar:
+        for p in sorted(payload.rglob('*')):
+            tar.add(p, arcname=str(p.relative_to(payload)), recursive=False)
+    encrypted = temp / 'backup.gpg'
+    crypt(tarpath, encrypted, secret, temp / 'gnupg')
+    # Exclusive creation; no overwrite even if the destination appeared during export.
+    with output.open('xb') as f, encrypted.open('rb') as src:
+        os.fchmod(f.fileno(), 0o600)
+        try:
+            shutil.copyfileobj(src, f)
+            f.flush()
+            os.fsync(f.fileno())
+        except BaseException:
+            output.unlink()
+            raise
+    print('Encrypted backup:', output)
+
+
+def unpack(tarpath, dest):
+    with tarfile.open(tarpath) as tar:
+        seen = set()
+        for m in tar:
+            path = PurePosixPath(m.name)
+            if path.is_absolute() or '..' in path.parts or str(path) != m.name or m.name in seen:
+                raise RuntimeError('Unsafe or duplicate archive path')
+            seen.add(m.name)
+            allowed = (m.name == 'manifest.json' or path.parts[0] in ('files', 'vms', 'image'))
+            if not allowed or not (m.isfile() or m.isdir()):
+                raise RuntimeError('Archive contains unsupported member')
+            target = dest / m.name
+            if m.isdir():
+                target.mkdir(parents=True, exist_ok=True)
+            else:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with tar.extractfile(m) as src, target.open('xb') as out:
+                    shutil.copyfileobj(src, out)
+                target.chmod(m.mode & 0o777 & ~0o022)
+    manifest = read(dest / 'manifest.json')
+    if manifest.get('version') != 1 or manifest.get('mode') not in ('config', 'full'):
+        raise RuntimeError('Unsupported backup format')
+    actual = {str(p.relative_to(dest)): digest(p) for p in dest.rglob('*')
+              if p.is_file() and p != dest / 'manifest.json'}
+    if actual != manifest.get('sha256'):
+        raise RuntimeError('Backup checksum mismatch')
+    for required in ('files/etc/netlab/config.json', 'files/etc/netlab/proxy.secret',
+                     'files/var/lib/netlab/state.json', 'files/var/lib/netlab/users.json',
+                     'files/etc/nginx/sites-available/netlab'):
+        if required not in actual:
+            raise RuntimeError('Backup is missing required files')
+    if len(manifest.get('instances', [])) != len(set(manifest.get('instances', []))):
+        raise RuntimeError('Duplicate instance manifest')
+    if manifest['mode'] == 'full' and instances(read(dest / 'files/var/lib/netlab/state.json')) != sorted(manifest['instances']):
+        raise RuntimeError('Instance manifest does not match saved state')
+    for path in actual:
+        if path.startswith('files/') and not any(path == 'files/' + root or path.startswith('files/' + root + '/') for root in PATHS):
+            raise RuntimeError('Unexpected restore path')
+    for name in manifest.get('instances', []):
+        if not NAME.fullmatch(name) or not (dest / 'vms' / (name + '.tar.gz')).is_file():
+            raise RuntimeError('Invalid instance manifest')
+    return manifest
+
+
+def preflight_restore(payload, manifest):
+    cfg = read(payload / 'files/etc/netlab/config.json')
+    if infrastructure(cfg) != manifest['infrastructure']:
+        raise RuntimeError('Target network/profile/storage mismatch; provision matching infrastructure first')
+    if digest('/opt/netlab-admin/labd.py') != manifest['code_sha256']:
+        raise RuntimeError('Install the same Netlab code revision before restore')
+    link = Path('/etc/nginx/sites-enabled/netlab')
+    if (link.exists() and not link.is_symlink()) or (link.is_symlink() and link.resolve() != Path('/etc/nginx/sites-available/netlab')):
+        raise RuntimeError('Expected sites-enabled/netlab to be the standard symlink')
+    state = read('/var/lib/netlab/state.json')
+    if state.get('users') or state.get('pool') or read('/var/lib/netlab/users.json'):
+        raise RuntimeError('Target is not empty; existing users/state will not be overwritten')
+    if any(Path('/etc/netlab/htpasswd').iterdir()):
+        raise RuntimeError('Target has login accounts')
+    recordings = Path('/var/lib/netlab/recordings')
+    if recordings.exists() and any(recordings.iterdir()):
+        raise RuntimeError('Target has recordings; refusing overwrite')
+    conversations = Path('/var/lib/netlab/tutor')
+    if conversations.exists() and any(conversations.iterdir()):
+        raise RuntimeError('Target has tutor conversations; refusing overwrite')
+    community = Path('/var/lib/netlab/community')
+    if community.exists() and any(community.iterdir()):
+        raise RuntimeError('Target has community chat; refusing overwrite')
+    existing = query('instances?recursion=1')
+    if any(NAME.fullmatch(i['name']) for i in existing):
+        raise RuntimeError('Target contains Netlab VMs; refusing restore')
+    if manifest['mode'] == 'full':
+        alias = manifest['image_alias']
+        if not re.fullmatch(r'[a-zA-Z0-9_-]+', alias):
+            raise RuntimeError('Invalid image alias')
+        aliases = query('images/aliases?recursion=1')
+        match = next((a for a in aliases if a['name'] == alias), None)
+        if match and match['target'] != manifest['image_fingerprint']:
+            raise RuntimeError('Target image alias conflicts; no image will be overwritten')
+    elif not subprocess.run(['lxc', 'image', 'info', cfg.get('image', 'netlab')], capture_output=True).returncode == 0:
+        raise RuntimeError('Config-only restore requires an existing golden image')
+    return cfg
+
+
+def restore(args, payload, manifest):
+    cfg = preflight_restore(payload, manifest)
+    if args.dry_run:
+        print('Preflight passed; no services, VMs or files changed')
+        return
+    recovery = Path(tempfile.mkdtemp(prefix='pre-restore-', dir='/var/backups/netlab'))
+    for path in PATHS:
+        copy_tree(Path('/') / path, recovery / path)
+    write(recovery / 'progress.json', {'status': 'starting', 'imported': []})
+    run('systemctl', 'stop', 'labd', 'nginx')
+    imported = []
+    try:
+        if manifest['mode'] == 'full':
+            alias = manifest['image_alias']
+            if subprocess.run(['lxc', 'image', 'info', alias], capture_output=True).returncode:
+                images = sorted((payload / 'image').iterdir())
+                meta = [p for p in images if p.name.endswith('.tar.xz') or p.name.endswith('.tar.gz')]
+                # LXD Ubuntu VM images are split metadata + rootfs; unified exports also supported.
+                if len(images) == 1:
+                    ordered = images
+                elif len(images) == 2 and len(meta) == 1:
+                    ordered = meta + [p for p in images if p not in meta]
+                else:
+                    raise RuntimeError('Unrecognized image export layout')
+                run('lxc', 'image', 'import', *(str(p) for p in ordered), '--alias', alias)
+            if query('images/aliases/' + alias)['target'] != manifest['image_fingerprint']:
+                raise RuntimeError('Imported image fingerprint mismatch')
+            for name in manifest['instances']:
+                print('Importing stopped VM:', name, flush=True)
+                run('lxc', 'import', str(payload / 'vms' / (name + '.tar.gz')), name, '--storage', 'labpool')
+                imported.append(name)
+                write(recovery / 'progress.json', {'status': 'importing', 'imported': imported})
+        for path in PATHS:
+            copy_tree(payload / 'files' / path, Path('/') / path)
+        statepath = Path('/var/lib/netlab/state.json')
+        state = read(statepath) if manifest['mode'] == 'full' else {'users': {}, 'pool': []}
+        for rec in state['users'].values():
+            if rec.get('instance'):
+                rec['status'] = 'stopped'
+                rec['stopped_at'] = time.strftime('%Y-%m-%dT%H:%M:%S+00:00', time.gmtime())
+        # User VMs stay stopped; existing warm-pool VMs are healed by labd.
+        for rec in state.get('pool', []):
+            rec['ready'] = False
+        write(statepath, state)
+        cfg['pool_size'] = 0
+        write('/etc/netlab/config.json', cfg)
+        run('chown', '-R', 'root:www-data', '/etc/netlab')
+        Path('/etc/netlab').chmod(0o750)
+        Path('/etc/netlab/htpasswd').chmod(0o750)
+        # Routing is generated from restored state by labd, never copied from a source IP map.
+        for name in ('lan-users.conf', 'tunnel-users.conf'):
+            Path('/etc/nginx/netlab.d', name).write_text('\n')
+        link = Path('/etc/nginx/sites-enabled/netlab')
+        if not link.exists():
+            link.symlink_to('/etc/nginx/sites-available/netlab')
+        run('nginx', '-t')
+        run('systemctl', 'enable', '--now', 'nginx', 'labd')
+        run('systemctl', 'is-active', 'nginx', 'labd')
+        write(recovery / 'progress.json', {'status': 'complete', 'imported': imported})
+        Path('/var/lib/netlab-bootstrap/preparing').unlink(missing_ok=True)
+        print('Restore complete. User VMs remain stopped; start them through the portal. Warm-pool VMs may restart.')
+        print('Pre-restore files:', recovery)
+    except BaseException:
+        run('systemctl', 'stop', 'labd', 'nginx')
+        write(recovery / 'progress.json', {'status': 'failed', 'imported': imported})
+        print('Restore failed; services remain stopped. No VM auto-deletion. Recovery:', recovery)
+        raise
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    sub = parser.add_subparsers(dest='command', required=True)
+    for command in ('create', 'inspect', 'restore'):
+        p = sub.add_parser(command)
+        p.add_argument('--passphrase-file', help='root-owned mode 600 file; otherwise prompt')
+        p.add_argument('--work-dir', default='/var/backups/netlab', help='private staging parent with enough free space')
+        if command == 'create':
+            p.add_argument('--mode', choices=('config', 'full'), default='config')
+            p.add_argument('--output', required=True)
+        else:
+            p.add_argument('archive')
+        if command == 'restore':
+            p.add_argument('--dry-run', action='store_true')
+    args = parser.parse_args()
+    if os.geteuid() != 0:
+        parser.error('Run with sudo')
+    if not shutil.which('gpg'):
+        parser.error('GnuPG is required; install the gnupg package first')
+    os.umask(0o077)
+    for path in PATHS:
+        if Path(args.work_dir).resolve().is_relative_to(Path('/') / path):
+            parser.error('--work-dir must be outside backed-up directories')
+    secret = password(args, confirm=args.command == 'create')
+    Path(args.work_dir).mkdir(parents=True, exist_ok=True, mode=0o700)
+    with open('/run/lock/netlab-deploy.lock', 'a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        with tempfile.TemporaryDirectory(prefix='backup-', dir=args.work_dir) as d:
+            temp = Path(d)
+            (temp / 'gnupg').mkdir(mode=0o700)
+            if args.command == 'create':
+                create(args, temp, secret)
+            else:
+                tarpath = temp / 'backup.tar'
+                crypt(args.archive, tarpath, secret, temp / 'gnupg', decrypt=True)
+                payload = temp / 'payload'
+                payload.mkdir()
+                manifest = unpack(tarpath, payload)
+                if args.command == 'inspect':
+                    info = {k: manifest[k] for k in ('version', 'mode', 'created', 'instances')}
+                    info['subnet'] = manifest['infrastructure']['network']['ipv4.address']
+                    info['profile'] = manifest['infrastructure']['profile']
+                    print(json.dumps(info, indent=2))
+                else:
+                    restore(args, payload, manifest)
+
+
+if __name__ == '__main__':
+    try:
+        main()
+    except (RuntimeError, OSError, subprocess.SubprocessError, ValueError, KeyError) as exc:
+        # Do not print subprocess output: it can contain secrets from imported configuration.
+        raise SystemExit('Backup operation failed: ' + (str(exc) if not isinstance(exc, subprocess.SubprocessError) else 'external command failed'))

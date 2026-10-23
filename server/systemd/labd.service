@@ -1,0 +1,16 @@
+[Unit]
+Description=netlab 온디맨드 실습 환경 발급 서비스
+After=snap.lxd.daemon.service network-online.target nginx.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/netlab-admin/labd.py
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
+RestartSec=3
+# lxc 실행과 nginx 설정 작성에 root 가 필요하다. 127.0.0.1 에만 바인딩된다.
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

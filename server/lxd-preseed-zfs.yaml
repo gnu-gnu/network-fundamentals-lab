@@ -1,0 +1,29 @@
+config:
+  core.https_address: '127.0.0.1:8443'
+networks:
+- name: lxdbr0
+  type: bridge
+  config:
+    ipv4.address: 10.200.0.1/24
+    ipv4.nat: "true"
+    ipv6.address: none
+    dns.domain: lab
+storage_pools:
+- name: labpool
+  driver: zfs
+  config:
+    source: /dev/REPLACE_WITH_DEDICATED_ZFS_DEVICE
+    zfs.pool_name: labpool
+profiles:
+- name: default
+  devices:
+    eth0:
+      name: eth0
+      network: lxdbr0
+      type: nic
+    root:
+      path: /
+      pool: labpool
+      type: disk
+projects: []
+cluster: null

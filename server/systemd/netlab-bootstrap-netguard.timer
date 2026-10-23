@@ -1,0 +1,10 @@
+[Unit]
+Description=Reconcile Netlab rules after Docker or LXD restarts
+
+[Timer]
+OnBootSec=20s
+OnUnitActiveSec=30s
+Unit=netlab-bootstrap-netguard.service
+
+[Install]
+WantedBy=timers.target

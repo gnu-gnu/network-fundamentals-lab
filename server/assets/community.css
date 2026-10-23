@@ -1,0 +1,24 @@
+.community-launcher {position:fixed;right:max(20px,env(safe-area-inset-right));bottom:max(20px,env(safe-area-inset-bottom));z-index:40;display:flex;align-items:center;gap:8px;border-radius:999px;box-shadow:0 5px 24px #0003;background:var(--panel2);color:var(--ink);font-weight:650}
+.tutor-launcher {bottom:max(20px,env(safe-area-inset-bottom));right:max(130px,calc(env(safe-area-inset-right) + 130px))}
+#communitybadge {background:var(--sig);color:var(--panel);border-radius:999px;min-width:20px;padding:0 5px;text-align:center;font-size:12px}
+.community-panel {display:flex;flex-direction:column;gap:10px;background:var(--panel);border:1px solid var(--wire);border-radius:12px;padding:18px;box-sizing:border-box;transform-origin:bottom right}
+.community-panel[hidden],#communitybadge[hidden] {display:none}
+.community-heading {display:flex;align-items:center;justify-content:space-between;gap:8px}
+.community-panel button {font-size:13px;padding:7px 10px}
+.community-messages {flex:1;min-height:140px;overflow:auto;overscroll-behavior:contain;overflow-wrap:anywhere}
+.community-message {padding:10px 0;border-bottom:1px solid var(--wire)}
+.community-message header {display:flex;align-items:baseline;gap:8px;color:var(--sig);font-size:12px}
+.community-message time {color:var(--ink3);font-size:11px}
+.community-message p {margin:5px 0 0;white-space:pre-wrap;line-height:1.55}
+.community-compose {display:flex;align-items:flex-end;gap:8px;margin-top:6px}
+#communityinput {flex:1;min-width:0;resize:vertical;min-height:60px;max-height:140px;background:var(--panel2);color:var(--ink);font:inherit;font-size:14px;border:1px solid var(--wire);border-radius:7px;padding:8px;box-sizing:border-box}
+#communityonline {overflow-wrap:anywhere;max-height:64px;overflow:auto}
+#communitystatus {min-height:18px}
+@media(min-width:1400px) {
+  .community-panel {position:fixed;right:16px;bottom:84px;width:420px;height:min(560px,calc(100dvh - 108px));max-height:calc(100dvh - 108px);z-index:36}
+  body.community-open .wrap {width:calc(100% - 452px);margin-left:max(0px,calc((100vw - 452px - 1240px)/2));margin-right:0}
+}
+@media(max-width:1399px) {
+  .community-panel {width:100%;height:min(560px,80dvh);margin:20px 0;scroll-margin-top:16px}
+  .community-launcher {right:16px;bottom:16px}
+}

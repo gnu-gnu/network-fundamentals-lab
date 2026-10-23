@@ -1,0 +1,55 @@
+.helpside {display:flex;flex-direction:column;gap:10px;min-width:0}
+.helpside[hidden] {display:none}
+.tutor-heading {display:flex;align-items:center;justify-content:space-between;gap:12px}
+#tutormodel {align-self:flex-start;max-width:100%;overflow-wrap:anywhere}
+#tutormodeldialog {box-sizing:border-box;width:min(440px,calc(100vw - 32px));max-height:calc(100dvh - 48px);overflow:auto;background:var(--panel);color:var(--ink);border:1px solid var(--wire);border-radius:16px;padding:22px;box-shadow:0 20px 80px #0006}
+#tutormodeldialog::backdrop {background:#0008;backdrop-filter:blur(4px)}
+#tutormodeldialog h2 {font-size:19px;margin:0}
+#tutormodeloptions {display:grid;gap:10px;margin-top:18px}
+.tutor-model-option {width:100%;text-align:left;padding:14px!important;border-radius:10px}
+.tutor-model-option[aria-pressed="true"] {border-color:var(--sig);background:var(--sigbg);color:var(--sig)}
+@media(prefers-reduced-motion:no-preference) {
+  #tutormodeldialog[open] {animation:tutor-model-appear .2s ease-out}
+  @keyframes tutor-model-appear {from{opacity:0;transform:translateY(10px) scale(.98)}to{opacity:1;transform:translateY(0) scale(1)}}
+}
+.tutor-launcher {position:fixed;right:max(20px,env(safe-area-inset-right));bottom:max(20px,env(safe-area-inset-bottom));z-index:40;display:flex;align-items:center;gap:8px;box-shadow:0 5px 24px #0003;background:var(--sig);color:var(--panel);border-color:var(--sig);border-radius:999px;font-weight:650}
+.tutor-launcher span {font-size:23px;line-height:1}
+.tutor-launcher:hover:not(:disabled) {color:var(--panel)}
+.tutor-launcher {transition:box-shadow .25s ease,background-color .25s ease}
+.tutor-launcher span {display:inline-block;transition:transform .3s cubic-bezier(.16,1,.3,1)}
+.tutor-launcher[aria-expanded="true"] {box-shadow:0 6px 30px #0005}
+.tutor-launcher[aria-expanded="true"] span {transform:rotate(90deg)}
+#tutorpanel {transform-origin:bottom right}
+@media(prefers-reduced-motion:reduce) {
+  .tutor-launcher,.tutor-launcher span {transition:none}
+}
+.helpside button {font-size:13px;padding:7px 10px}
+#tutorinput {font:inherit;font-size:14px;line-height:1.4;background:var(--panel);color:var(--ink);border:1px solid var(--wire);border-radius:7px;padding:9px;resize:vertical}
+.tutor-compose {display:flex;align-items:stretch;gap:8px;min-width:0;flex-shrink:0}
+.tutor-compose #tutorinput {flex:1;min-width:0;width:0;box-sizing:border-box}
+#tutorsend {flex:none;white-space:nowrap}
+.tutor-sources {display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:10px;font-size:12px;color:var(--ink3)}
+.tutor-sources a {border:1px solid var(--wire);border-radius:6px;padding:3px 7px;color:var(--sig);text-decoration:none}
+.tutor-sources a:hover {background:var(--sigbg)}
+.tutor-actions {display:flex;flex-wrap:wrap;gap:6px}
+.tutor-share {display:block;line-height:1.5}
+#tutorlog {min-height:100px;max-height:min(45vh,440px)!important;line-height:1.65;overflow-wrap:anywhere;overscroll-behavior:contain}
+.tutor-message {border-bottom:1px solid var(--wire);padding:10px 0}
+.tutor-question {color:var(--ink3);margin:0 0 8px}
+.tutor-answer {white-space:pre-wrap}
+.tutor-code {white-space:pre-wrap;background:var(--panel2);padding:10px;border-radius:6px;font-size:12px}
+#tutorlog details {font-size:12px;margin:8px 0}
+#tutorlog summary {cursor:pointer;color:var(--sig)}
+.helpside:has(.tutor-message) {gap:7px}
+@media(min-width:1400px) {
+  :root {--tutor-width:clamp(420px,calc(100vw - 960px),840px)}
+  body.tutor-open .wrap {width:calc(100% - var(--tutor-width) - 32px);margin-left:max(0px,calc((100vw - var(--tutor-width) - 32px - 1240px)/2));margin-right:0}
+  #tutorpanel {position:fixed;right:16px;bottom:84px;width:var(--tutor-width);height:min(800px,calc(100dvh - 108px));max-height:calc(100dvh - 108px);z-index:35;box-shadow:0 12px 48px #0004;overflow:auto;overscroll-behavior:contain}
+  #tutorpanel #tutorlog {flex:1 1 240px;min-height:80px;max-height:none!important}
+  #tutorpanel #tutorinput {flex-shrink:0;min-height:68px;max-height:160px;margin-top:0!important}
+  #tutorpanel .tutor-actions,#tutorpanel .tutor-heading {flex-shrink:0}
+}
+@media(max-width:1399px) {
+  #tutorpanel {flex:1 0 100%;width:100%;margin-top:4px;scroll-margin-top:16px}
+  .tutor-launcher {right:16px;bottom:16px}
+}

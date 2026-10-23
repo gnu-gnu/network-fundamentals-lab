@@ -5,3 +5,17 @@
 GOAL.md
 PLAN.md
 VERIFICATION.md
+
+# 서버의 실제 비밀값·상태·배포 백업, 개발기 주소·접속 절차 같은 내부 문서는 저장소에 넣지 않는다.
+server/local/
+server/DEVELOPMENT.md
+server/backups/
+server/**/__pycache__/
+server/**/*.pyc
+server/**/proxy.secret
+server/**/users.json
+server/**/state.json
+server/**/tutor.json
+server/**/config.json
+server/**/*.htpasswd
+server/**/.env

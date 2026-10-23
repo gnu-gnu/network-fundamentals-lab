@@ -1,0 +1,42 @@
+#!/bin/bash
+# 브라우저 터미널 세션을 통째로 녹화한 뒤 로그인 셸을 띄운다.
+#
+# asciinema 는 PTY 계층에서 기록하므로 `docker exec` 로 clab 노드에 들어가서 친 명령까지
+# 전부 잡힌다. 셸 훅으로는 바깥 셸만 잡히기 때문에 이 계층이 필요하다.
+
+DIR=/var/log/lab-sessions
+LOG="$DIR/session-errors.log"
+mkdir -p "$DIR"
+chgrp lab "$DIR" 2>/dev/null || true
+chmod 775 "$DIR"
+
+# asciinema 는 설정 파일을 읽으려고 홈 디렉터리를 요구하는데, systemd 서비스에는
+# HOME 이 주어지지 않아 "need $HOME or $XDG_CONFIG_HOME" 으로 즉시 죽는다.
+# 전용 경로를 지정해 이 의존을 없앤다.
+export ASCIINEMA_CONFIG_HOME=/var/lib/asciinema
+mkdir -p "$ASCIINEMA_CONFIG_HOME"
+
+TS=$(date -u +%Y%m%dT%H%M%SZ)
+CAST="$DIR/${TS}-$$.cast"
+
+# 이 세션의 명령 로그 위치를 셸에 알려준다.
+# login 은 기본적으로 환경을 초기화하므로 -p 로 보존해야 셸까지 전달된다
+# (-p 를 써도 HOME/USER 는 로그인 사용자 기준으로 올바르게 다시 잡힌다).
+export LAB_SESSION_ID="${TS}-$$"
+export LAB_CMDLOG="$DIR/${TS}-$$.commands.jsonl"
+
+if command -v asciinema >/dev/null 2>&1; then
+  asciinema rec --quiet \
+    --title "netlab $(hostname) ${TS}" \
+    --command "/bin/login -p -f lab" \
+    "$CAST" 2>>"$LOG"
+  rc=$?
+  [ $rc -eq 0 ] && exit 0
+  # 브라우저를 그냥 닫으면 ttyd 가 프로세스를 죽이므로 asciinema 는 0 이 아닌 값으로 끝난다.
+  # 이건 실패가 아니다 — 녹화가 남아 있으면 세션이 정상적으로 진행된 것으로 본다.
+  # (여기서 걸러내지 않으면 녹화 없는 로그인 셸이 한 번 더 뜬다)
+  [ -s "$CAST" ] && exit 0
+  echo "[$(date -u +%FT%TZ)] asciinema 시작 실패 rc=$rc — 녹화 없이 진행" >> "$LOG"
+fi
+
+exec /bin/login -p -f lab

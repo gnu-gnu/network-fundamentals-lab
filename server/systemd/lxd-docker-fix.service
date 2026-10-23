@@ -1,0 +1,34 @@
+[Unit]
+Description=Allow LXD bridge traffic through Docker's FORWARD DROP policy
+After=docker.service snap.lxd.daemon.service
+Wants=docker.service
+PartOf=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+
+# DOCKER-USER 는 Docker 가 자기 규칙보다 먼저 평가해 주는 사용자 확장 지점이다.
+# 여기에 lxdbr0 예외를 넣어야 Docker 의 FORWARD DROP 정책에도 LXD VM 이 인터넷을 쓴다.
+#
+# 주의 — 순서가 정책이다:
+#   예전에는 "-i lxdbr0 -j ACCEPT" 하나만 넣었다. ACCEPT 는 종결 판정이라, 이 규칙이
+#   걸리면 그 아래(netlab-netguard 의 FORWARD 사설망 REJECT)는 평가조차 되지 않는다.
+#   실측으로 실습 VM -> LAN 게이트웨이가 HTTP 200 으로 뚫렸다.
+#   그래서 사설망 REJECT 를 DOCKER-USER 안에서 ACCEPT '위에' 둔다. 대역은
+#   netlab-netguard.service 의 FORWARD 규칙과 동일하게 맞춘다 (한쪽만 고치지 말 것).
+#
+# 순서를 확정적으로 만들기 위해 매번 체인을 비우고 다시 쌓는다. 이 체인에 쓰는 것은
+# 이 유닛뿐이다. 비어 있는 순간에도 격리는 netguard 의 FORWARD REJECT 가 받쳐 준다.
+ExecStart=/bin/bash -c 'iptables -F DOCKER-USER 2>/dev/null || iptables -N DOCKER-USER'
+ExecStart=/bin/bash -c 'iptables -A DOCKER-USER -i lxdbr0 -d 169.254.0.0/16 -j REJECT --reject-with icmp-admin-prohibited'
+ExecStart=/bin/bash -c 'iptables -A DOCKER-USER -i lxdbr0 -d 10.0.0.0/8 -j REJECT --reject-with icmp-admin-prohibited'
+ExecStart=/bin/bash -c 'iptables -A DOCKER-USER -i lxdbr0 -d 172.16.0.0/12 -j REJECT --reject-with icmp-admin-prohibited'
+ExecStart=/bin/bash -c 'iptables -A DOCKER-USER -i lxdbr0 -d 192.168.0.0/16 -j REJECT --reject-with icmp-admin-prohibited'
+# 위 REJECT 를 통과한 것(= 인터넷행)만 허용한다.
+ExecStart=/bin/bash -c 'iptables -A DOCKER-USER -i lxdbr0 -j ACCEPT'
+# 응답 트래픽. netlab-netguard 의 "FORWARD -o lxdbr0 -j ACCEPT" 와 같은 정책이다.
+ExecStart=/bin/bash -c 'iptables -A DOCKER-USER -o lxdbr0 -j ACCEPT'
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,340 @@
+#!/usr/bin/env python3
+"""
+실습 세션 기록 관리 — 채점용.
+
+  netlab-record list [계정]              수집된 세션 목록
+  netlab-record collect [계정]           실행 중인 환경에서 기록을 지금 회수
+  netlab-record transcript <계정> [세션]  사람이/LLM 이 읽을 수 있는 텍스트로 변환
+  netlab-record grade <계정> [세션]       채점용 묶음 출력 (LLM 에 그대로 넣는 용도)
+  netlab-record purge <계정> [--older-days N]
+
+기록은 두 갈래로 남는다.
+  *.cast                 화면 전체 녹화(asciinema). 노드 안에서 친 명령까지 전부 들어 있다.
+  *.commands.jsonl       바깥 셸의 명령 기록. 시각·작업 디렉터리·종료 코드가 붙어 있어
+                         "무엇을 시도했고 실패했는지" 를 기계가 읽기 좋다.
+"""
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+from datetime import datetime, timezone, timedelta
+
+ROOT = "/var/lib/netlab/recordings"
+STATE = "/var/lib/netlab/state.json"
+VM_DIR = "/var/log/lab-sessions"
+
+
+# ────────────────────────── 공통 ──────────────────────────
+
+def load_state():
+    try:
+        with open(STATE) as f:
+            return json.load(f)
+    except Exception:
+        return {"users": {}, "pool": []}
+
+
+def users_with_env():
+    return {u: r for u, r in load_state().get("users", {}).items() if r.get("instance")}
+
+
+def lxc(*args, timeout=300):
+    p = subprocess.run(["lxc", *args], capture_output=True, text=True, timeout=timeout)
+    return p.returncode, p.stdout, p.stderr
+
+
+# 게스트가 만드는 기록의 이름 규칙과 크기 상한. labd 와 같은 정책을 쓴다.
+REC_NAME_RE = re.compile(r"^[0-9A-Za-z._-]+\.(cast|commands\.jsonl)$")
+REC_MAX_FILE = 64 * 1024 * 1024
+REC_MAX_TOTAL = 512 * 1024 * 1024
+REC_MAX_FILES = 500
+
+
+def collect(user, instance=None):
+    """
+    실행 중인 인스턴스에서 기록을 호스트로 가져온다. VM 이 사라져도 기록은 남아야 한다.
+
+    tar 를 쓰지 않는다. 게스트의 lab 사용자는 NOPASSWD:ALL 이라 임의의 tar 스트림을
+    만들 수 있어, 호스트 root 가 그걸 메모리에 받아 풀면 DoS·아카이브 파싱 위험이 있다.
+    이름 규칙에 맞는 파일만 크기를 확인하고 `lxc file pull` 로 하나씩 내려받는다.
+    """
+    if instance is None:
+        rec = users_with_env().get(user)
+        if not rec:
+            return 0, "발급된 환경이 없습니다"
+        instance = rec["instance"]
+    rc, out, _ = lxc("list", instance, "--format", "json", timeout=60)
+    if rc != 0:
+        return 0, "인스턴스를 찾을 수 없습니다"
+    try:
+        if json.loads(out)[0]["status"] != "Running":
+            return 0, "실행 중이 아닙니다 (다음 기동 때 회수됩니다)"
+    except Exception:
+        return 0, "상태를 알 수 없습니다"
+
+    dest = os.path.join(ROOT, user)
+    os.makedirs(dest, exist_ok=True)
+    os.chmod(dest, 0o700)
+
+    rc, out, _ = lxc("exec", instance, "--", "bash", "-c",
+                     f"find {VM_DIR} -maxdepth 1 -type f -printf '%s %f\\n' 2>/dev/null",
+                     timeout=60)
+    if rc != 0 or not out.strip():
+        return 0, "가져올 기록이 없습니다"
+
+    total = count = 0
+    for line in out.splitlines():
+        parts = line.split(" ", 1)
+        if len(parts) != 2:
+            continue
+        try:
+            size = int(parts[0])
+        except ValueError:
+            continue
+        name = parts[1].strip()
+        if not REC_NAME_RE.match(name) or "/" in name or name in (".", ".."):
+            continue
+        if size > REC_MAX_FILE:
+            continue
+        if count >= REC_MAX_FILES or total + size > REC_MAX_TOTAL:
+            break
+        local = os.path.join(dest, name)
+        if os.path.exists(local) and os.path.getsize(local) >= size:
+            continue
+        r2, _, _ = lxc("file", "pull", f"{instance}{VM_DIR}/{name}", local, timeout=120)
+        if r2 != 0:
+            continue
+        try:
+            os.chmod(local, 0o600)
+        except OSError:
+            pass
+        total += size
+        count += 1
+    n = len([f for f in os.listdir(dest) if f.endswith(".cast")])
+    return n, None
+
+
+# ─────────────────── asciicast → 텍스트 ───────────────────
+
+ANSI = re.compile(
+    r"\x1b\[[0-9;?]*[ -/]*[@-~]"      # CSI
+    r"|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)"  # OSC
+    r"|\x1b[@-Z\\-_]"                  # 2바이트 이스케이프
+)
+
+
+def render_cast(path, max_chars=400_000):
+    """
+    녹화를 읽을 수 있는 텍스트로 만든다.
+
+    완전한 터미널 에뮬레이션은 하지 않는다(화면 갱신·커서 이동을 쓰는 프로그램은
+    출력이 어긋날 수 있다). 이 실습은 대부분 줄 단위 출력이라 실용적으로 충분하다.
+    """
+    started, chunks, total = None, [], 0
+    with open(path, encoding="utf-8", errors="replace") as f:
+        header = f.readline()
+        try:
+            started = json.loads(header).get("timestamp")
+        except Exception:
+            pass
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                ev = json.loads(line)
+            except Exception:
+                continue
+            if len(ev) < 3 or ev[1] != "o":
+                continue
+            chunks.append(ev[2])
+            total += len(ev[2])
+            if total > max_chars * 3:
+                chunks.append("\n…(이하 생략: 출력이 너무 깁니다)…\n")
+                break
+
+    text = "".join(chunks)
+    text = ANSI.sub("", text)
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    text = re.sub(r"\x08+", "", text)                 # 백스페이스
+    text = "".join(c for c in text if c == "\n" or c == "\t" or ord(c) >= 32)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    if len(text) > max_chars:
+        text = text[:max_chars] + "\n…(이하 생략)…\n"
+    return started, text
+
+
+def read_commands(dest, session=None):
+    rows = []
+    for fn in sorted(os.listdir(dest)):
+        if not fn.endswith(".commands.jsonl"):
+            continue
+        if session and not fn.startswith(session):
+            continue
+        with open(os.path.join(dest, fn), encoding="utf-8", errors="replace") as f:
+            for line in f:
+                try:
+                    rows.append(json.loads(line))
+                except Exception:
+                    pass
+    rows.sort(key=lambda r: r.get("ts", ""))
+    return rows
+
+
+def sessions(user):
+    dest = os.path.join(ROOT, user)
+    if not os.path.isdir(dest):
+        return []
+    out = []
+    for fn in sorted(os.listdir(dest)):
+        if fn.endswith(".cast"):
+            p = os.path.join(dest, fn)
+            out.append((fn[:-5], p, os.path.getsize(p)))
+    return out
+
+
+# ────────────────────────── 명령 ──────────────────────────
+
+def cmd_list(args):
+    targets = [args.user] if args.user else sorted(
+        set(os.listdir(ROOT)) if os.path.isdir(ROOT) else [])
+    if not targets:
+        print("수집된 기록이 없습니다.")
+        return
+    for u in targets:
+        ss = sessions(u)
+        print(f"\n{u}  ({len(ss)}개 세션)")
+        if not ss:
+            print("  없음")
+            continue
+        cmds = read_commands(os.path.join(ROOT, u))
+        for sid, path, size in ss:
+            n = len([c for c in cmds if c.get("session") == sid and "cmd" in c])
+            print(f"  {sid}   {size/1024:8.1f} KB   명령 {n:3d}개")
+
+
+def cmd_collect(args):
+    targets = [args.user] if args.user else list(users_with_env())
+    if not targets:
+        print("발급된 환경이 없습니다.")
+        return
+    for u in targets:
+        n, err = collect(u)
+        print(f"  {u}: " + (err if err else f"{n}개 세션 보관 중"))
+
+
+def cmd_transcript(args):
+    ss = sessions(args.user)
+    if not ss:
+        print(f"{args.user} 의 기록이 없습니다.", file=sys.stderr)
+        sys.exit(1)
+    picked = [s for s in ss if not args.session or s[0].startswith(args.session)]
+    if not picked:
+        print(f"그런 세션이 없습니다: {args.session}", file=sys.stderr)
+        sys.exit(1)
+    for sid, path, _ in picked:
+        started, text = render_cast(path)
+        when = (datetime.fromtimestamp(started, timezone.utc).isoformat()
+                if started else sid)
+        print(f"\n{'='*70}\n세션 {sid}   시작 {when}\n{'='*70}")
+        print(text)
+
+
+def cmd_grade(args):
+    """LLM 에 그대로 넘길 수 있는 묶음을 만든다."""
+    ss = sessions(args.user)
+    if not ss:
+        print(f"{args.user} 의 기록이 없습니다.", file=sys.stderr)
+        sys.exit(1)
+    picked = [s for s in ss if not args.session or s[0].startswith(args.session)]
+    cmds = read_commands(os.path.join(ROOT, args.user), args.session)
+
+    print(f"# 실습 세션 채점 자료 — {args.user}")
+    print()
+    print("아래는 한 학습자의 네트워크 실습 터미널 기록입니다. 다음을 판단해 주세요.")
+    print()
+    print("1. 무엇을 하려 했고, 실제로 무엇을 했는가")
+    print("2. 어디서 잘못된 판단을 했는가 (증상 해석, 도구 선택, 원인 추정)")
+    print("3. 그 지점에서 대신 무엇을 했어야 하는가 — 구체적인 명령까지")
+    print("4. 잘한 점")
+    print()
+    print("실습은 `break → observe → fix` 구조입니다. 토폴로지에 의도적 고장이 심어져 있고,")
+    print("학습자는 증상을 관찰해 원인을 찾아 최소한의 수정으로 고쳐야 합니다.")
+    print("따라서 '고쳤는지' 만이 아니라 '어떻게 좁혀 갔는지' 를 함께 봐 주세요.")
+    print()
+
+    if cmds:
+        print("## 명령 기록 (시각 · 종료코드)")
+        print()
+        print("```")
+        for c in cmds:
+            ts = c.get("ts", "")[11:19]
+            if "event" in c:
+                print(f"{ts}  [{c['event']}] {c.get('detail','')}")
+            else:
+                mark = " " if c.get("rc") == 0 else f" ← 실패(rc={c.get('rc')})"
+                print(f"{ts}  {c.get('cwd','')}$ {c.get('cmd','')}{mark}")
+        print("```")
+        print()
+
+    print("## 화면 기록")
+    print()
+    for sid, path, _ in picked:
+        started, text = render_cast(path, max_chars=args.max_chars)
+        when = (datetime.fromtimestamp(started, timezone.utc).isoformat()
+                if started else sid)
+        print(f"### 세션 {sid} (시작 {when})")
+        print()
+        print("```")
+        print(text)
+        print("```")
+        print()
+
+
+def cmd_purge(args):
+    dest = os.path.join(ROOT, args.user)
+    if not os.path.isdir(dest):
+        print("기록이 없습니다.")
+        return
+    cutoff = datetime.now(timezone.utc) - timedelta(days=args.older_days)
+    removed = 0
+    for fn in os.listdir(dest):
+        p = os.path.join(dest, fn)
+        if datetime.fromtimestamp(os.path.getmtime(p), timezone.utc) < cutoff:
+            os.remove(p)
+            removed += 1
+    print(f"{removed}개 파일을 삭제했습니다.")
+
+
+def main():
+    ap = argparse.ArgumentParser(add_help=True, description="실습 세션 기록 관리")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+
+    p = sub.add_parser("list", help="세션 목록"); p.add_argument("user", nargs="?")
+    p.set_defaults(func=cmd_list)
+
+    p = sub.add_parser("collect", help="지금 회수"); p.add_argument("user", nargs="?")
+    p.set_defaults(func=cmd_collect)
+
+    p = sub.add_parser("transcript", help="읽을 수 있는 텍스트로 변환")
+    p.add_argument("user"); p.add_argument("session", nargs="?")
+    p.set_defaults(func=cmd_transcript)
+
+    p = sub.add_parser("grade", help="LLM 채점용 묶음 출력")
+    p.add_argument("user"); p.add_argument("session", nargs="?")
+    p.add_argument("--max-chars", type=int, default=200_000)
+    p.set_defaults(func=cmd_grade)
+
+    p = sub.add_parser("purge", help="오래된 기록 삭제")
+    p.add_argument("user"); p.add_argument("--older-days", type=int, default=90)
+    p.set_defaults(func=cmd_purge)
+
+    args = ap.parse_args()
+    os.makedirs(ROOT, exist_ok=True)
+    args.func(args)
+
+
+if __name__ == "__main__":
+    main()

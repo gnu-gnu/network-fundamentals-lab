@@ -1,0 +1,184 @@
+#!/bin/bash
+# netlab 계정 관리
+#
+#   netlab-user add    <계정> [비밀번호]   계정 추가 (비밀번호 생략 시 자동 생성)
+#   netlab-user passwd <계정> [비밀번호]   비밀번호 변경
+#   netlab-user del    <계정>              계정 삭제 (발급된 환경도 함께 회수)
+#   netlab-user list                       계정 및 환경 현황
+#   netlab-user role   <계정> admin|user   역할 지정 (관리자 콘솔 접근 권한)
+#   netlab-user block  <계정>              차단 (로그인 거부)
+#   netlab-user unblock <계정>             차단 해제
+#   netlab-user admin  [비밀번호]          사내망용 관리자 콘솔 비밀번호 설정
+#
+# 계정을 바꾸면 labd 에 SIGHUP 을 보내 라우팅이 즉시 반영된다.
+set -euo pipefail
+
+HTDIR=/etc/netlab/htpasswd
+ADMIN_HT=/etc/netlab/admin.htpasswd
+STATE=/var/lib/netlab/state.json
+NAME_RE='^[a-z][a-z0-9_-]{1,30}$'
+
+[ "$(id -u)" -eq 0 ] || { echo "root 권한이 필요합니다 (sudo)" >&2; exit 1; }
+command -v htpasswd >/dev/null || { echo "apache2-utils 가 필요합니다" >&2; exit 1; }
+mkdir -p "$HTDIR"
+
+# 접속 주소는 nginx 설정에서 포트를 읽어 만든다.
+# 포트를 바꿀 때 여기저기 고치다 빠뜨리는 일을 막기 위해 출처를 한 곳으로 둔다.
+portal_url() {
+  local port ip
+  port=$(sed -n 's/^[[:space:]]*listen[[:space:]]\+\([0-9]\+\).*/\1/p' \
+         /etc/nginx/sites-available/netlab 2>/dev/null | head -1)
+  [ -n "$port" ] || port=80
+  ip=$(hostname -I | awk '{print $1}')
+  if [ "$port" = "80" ]; then echo "http://$ip"; else echo "http://$ip:$port"; fi
+}
+
+genpw() { { tr -dc 'A-Za-z0-9' </dev/urandom || true; } | head -c 14; }
+
+reload_labd() {
+  if pkill -HUP -x -f '/usr/bin/python3 /opt/netlab-admin/labd.py' 2>/dev/null; then
+    sleep 1
+  else
+    echo "  (labd 가 실행 중이 아닙니다 — 시작 시 자동 반영됩니다)" >&2
+  fi
+}
+
+check_name() {
+  [[ "$1" =~ $NAME_RE ]] || {
+    echo "계정명은 소문자로 시작하고 영소문자·숫자·-·_ 만 쓸 수 있습니다 (2~31자): $1" >&2
+    exit 1; }
+}
+
+cmd=${1:-}; shift || true
+
+case "$cmd" in
+  add|passwd)
+    u=${1:-}; [ -n "$u" ] || { echo "계정명을 지정하세요" >&2; exit 1; }
+    check_name "$u"
+    if [ "$cmd" = add ] && [ -f "$HTDIR/$u" ]; then
+      echo "이미 있는 계정입니다: $u" >&2; exit 1
+    fi
+    if [ "$cmd" = passwd ] && [ ! -f "$HTDIR/$u" ]; then
+      echo "없는 계정입니다: $u" >&2; exit 1
+    fi
+    pw=${2:-}
+    [ -n "$pw" ] || { pw=$(genpw); shown=1; }
+    htpasswd -bc "$HTDIR/$u" "$u" "$pw" >/dev/null 2>&1
+    chmod 640 "$HTDIR/$u"; chgrp www-data "$HTDIR/$u" 2>/dev/null || true
+    reload_labd
+    if [ "$cmd" = add ]; then echo "계정 $u 추가 완료"; else echo "계정 $u 비밀번호 변경 완료"; fi
+    [ "${shown:-0}" = 1 ] && echo "  비밀번호: $pw"
+    echo "  접속: $(portal_url)/"
+    ;;
+
+  del)
+    u=${1:-}; [ -n "$u" ] || { echo "계정명을 지정하세요" >&2; exit 1; }
+    check_name "$u"
+    [ -f "$HTDIR/$u" ] || { echo "없는 계정입니다: $u" >&2; exit 1; }
+    inst=$(python3 -c "
+import json
+try:
+    s=json.load(open('$STATE'))
+    print((s.get('users',{}).get('$u') or {}).get('instance') or '')
+except Exception: print('')")
+    # 상태 파일은 labd 가 메모리에 들고 있으므로 여기서 직접 고치지 않는다.
+    # htpasswd 만 지우고 SIGHUP 을 보내면 labd 가 환경까지 회수한다.
+    rm -f "$HTDIR/$u"
+    reload_labd
+    if [ -n "$inst" ]; then
+      echo "계정 $u 삭제 완료 — 발급된 환경($inst)은 labd 가 회수합니다"
+      for _ in $(seq 1 30); do
+        lxc info "$inst" >/dev/null 2>&1 || { echo "  환경 회수 완료"; break; }
+        sleep 2
+      done
+    else
+      echo "계정 $u 삭제 완료"
+    fi
+    ;;
+
+  role|block|unblock)
+    u=${1:-}; [ -n "$u" ] || { echo "계정명을 지정하세요" >&2; exit 1; }
+    check_name "$u"
+    case "$cmd" in
+      role)
+        r=${2:-}; [ "$r" = admin ] || [ "$r" = user ] || {
+          echo "역할은 admin 또는 user 여야 합니다" >&2; exit 1; }
+        ;;
+      block)   r=block ;;
+      unblock) r=unblock ;;
+    esac
+    python3 - "$u" "$r" <<'TBL'
+import json, os, sys
+p = "/var/lib/netlab/users.json"
+acct, action = sys.argv[1], sys.argv[2]
+try:
+    users = json.load(open(p))
+except Exception:
+    users = {}
+rec = users.get(acct)
+if rec is None:
+    # Access 로 들어온 적 없는 계정도 미리 역할을 정해 둘 수 있게 한다.
+    rec = {"email": "", "role": "user", "created": "", "last_login": "", "disabled": False}
+    users[acct] = rec
+if action in ("admin", "user"):
+    rec["role"] = action
+    print("  역할: %s → %s" % (acct, action))
+elif action == "block":
+    rec["disabled"] = True
+    print("  차단: %s" % acct)
+else:
+    rec["disabled"] = False
+    print("  차단 해제: %s" % acct)
+os.makedirs(os.path.dirname(p), exist_ok=True)
+tmp = p + ".tmp"
+json.dump(users, open(tmp, "w"), indent=2, ensure_ascii=False)
+os.chmod(tmp, 0o600)
+os.replace(tmp, p)
+TBL
+    reload_labd
+    ;;
+
+  admin)
+    pw=${1:-}
+    [ -n "$pw" ] || { pw=$(genpw); shown=1; }
+    htpasswd -bc "$ADMIN_HT" admin "$pw" >/dev/null 2>&1
+    chmod 640 "$ADMIN_HT"; chgrp www-data "$ADMIN_HT" 2>/dev/null || true
+    systemctl reload nginx 2>/dev/null || true
+    echo "관리자 비밀번호 설정 완료 (아이디: admin)"
+    [ "${shown:-0}" = 1 ] && echo "  비밀번호: $pw"
+    echo "  콘솔: $(portal_url)/admin/"
+    ;;
+
+  list|"")
+    printf "%-13s %-24s %-7s %-10s %-17s %s\n" 계정 이메일 역할 상태 인스턴스 주소
+    printf "%s\n" "-----------------------------------------------------------------------------------------------"
+    python3 - <<'PY'
+import json,os
+HT='/etc/netlab/htpasswd'
+try: names=set(os.listdir(HT))
+except FileNotFoundError: names=set()
+try: tbl=json.load(open('/var/lib/netlab/users.json'))
+except Exception: tbl={}
+names |= set(tbl)
+try: st=json.load(open('/var/lib/netlab/state.json')).get('users',{})
+except Exception: st={}
+if not names:
+    print("등록된 계정이 없습니다.")
+    print("  사내망용   : netlab-user add <계정>")
+    print("  외부(Access): 처음 로그인할 때 자동 생성됩니다")
+for u in sorted(names):
+    r=st.get(u) or {}
+    t=tbl.get(u) or {}
+    role=t.get('role','user')
+    if t.get('disabled'): role='차단됨'
+    print("%-13s %-24s %-7s %-10s %-17s %s" % (
+        u, (t.get('email') or '-')[:24], role,
+        r.get('status','환경없음'), r.get('instance') or '-', r.get('ip') or '-'))
+PY
+    ;;
+
+  *)
+    sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'
+    exit 1
+    ;;
+esac

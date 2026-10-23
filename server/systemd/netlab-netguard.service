@@ -1,0 +1,44 @@
+[Unit]
+Description=실습 VM 이 호스트 서비스에 접근하지 못하게 막는다
+After=snap.lxd.daemon.service network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# VM 에는 DNS·DHCP·ICMP 만 허용하고 나머지(SSH·LXD API·포털)는 막는다.
+# 규칙은 위에서부터 평가되므로 허용을 먼저 넣기 위해 역순으로 삽입한다.
+# 호스트가 VM 으로 건 연결의 '응답'도 lxdbr0 의 INPUT 을 탄다. 이걸 빼먹으면
+# nginx→ttyd 프록시가 504 로 죽는다(실제로 겪었다). ESTABLISHED 허용이 맨 위여야 한다.
+# (VM↔VM 차단은 브리지 포트 격리가 담당한다 — 같은 브리지 통신은 방화벽을 타지 않는다)
+ExecStart=/bin/bash -c 'iptables -C INPUT -i lxdbr0 -j REJECT --reject-with icmp-port-unreachable 2>/dev/null || iptables -I INPUT -i lxdbr0 -j REJECT --reject-with icmp-port-unreachable'
+ExecStart=/bin/bash -c 'iptables -C INPUT -i lxdbr0 -p icmp -j ACCEPT 2>/dev/null || iptables -I INPUT -i lxdbr0 -p icmp -j ACCEPT'
+ExecStart=/bin/bash -c 'iptables -C INPUT -i lxdbr0 -p udp --dport 67 -j ACCEPT 2>/dev/null || iptables -I INPUT -i lxdbr0 -p udp --dport 67 -j ACCEPT'
+ExecStart=/bin/bash -c 'iptables -C INPUT -i lxdbr0 -p tcp --dport 53 -j ACCEPT 2>/dev/null || iptables -I INPUT -i lxdbr0 -p tcp --dport 53 -j ACCEPT'
+ExecStart=/bin/bash -c 'iptables -C INPUT -i lxdbr0 -p udp --dport 53 -j ACCEPT 2>/dev/null || iptables -I INPUT -i lxdbr0 -p udp --dport 53 -j ACCEPT'
+ExecStart=/bin/bash -c 'iptables -C INPUT -i lxdbr0 -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT 2>/dev/null || iptables -I INPUT -i lxdbr0 -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT'
+
+# VM egress 에서 사설망(LAN·다른 사설대역·링크로컬) 목적지를 막는다.
+# 인터넷(공인 IP)·게이트웨이 DNS(INPUT)·VM 내부 containerlab 은 영향받지 않는다.
+# 이걸로 실습 VM 이 물리 LAN(공유기·NAS·다른 PC)으로 피벗하는 걸 차단한다.
+ExecStart=/bin/bash -c 'iptables -C FORWARD -i lxdbr0 -d 192.168.0.0/16 -j REJECT --reject-with icmp-admin-prohibited 2>/dev/null || iptables -I FORWARD -i lxdbr0 -d 192.168.0.0/16 -j REJECT --reject-with icmp-admin-prohibited'
+ExecStart=/bin/bash -c 'iptables -C FORWARD -i lxdbr0 -d 172.16.0.0/12 -j REJECT --reject-with icmp-admin-prohibited 2>/dev/null || iptables -I FORWARD -i lxdbr0 -d 172.16.0.0/12 -j REJECT --reject-with icmp-admin-prohibited'
+ExecStart=/bin/bash -c 'iptables -C FORWARD -i lxdbr0 -d 10.0.0.0/8 -j REJECT --reject-with icmp-admin-prohibited 2>/dev/null || iptables -I FORWARD -i lxdbr0 -d 10.0.0.0/8 -j REJECT --reject-with icmp-admin-prohibited'
+ExecStart=/bin/bash -c 'iptables -C FORWARD -i lxdbr0 -d 169.254.0.0/16 -j REJECT --reject-with icmp-admin-prohibited 2>/dev/null || iptables -I FORWARD -i lxdbr0 -d 169.254.0.0/16 -j REJECT --reject-with icmp-admin-prohibited'
+# IPv6 인터넷 노출 차단. 호스트가 글로벌 IPv6 를 갖고 sshd 가 [::]:22 에 바인딩돼 있어
+# 인터넷에서 직접 닿을 수 있었다(감사에서 지적). 관리자는 IPv4 LAN 으로 접속하므로
+# IPv6 신규 SSH·LXD 인바운드만 막는다. established·ICMPv6·링크로컬은 유지한다.
+ExecStart=/bin/bash -c 'ip6tables -C INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT 2>/dev/null || ip6tables -I INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT'
+ExecStart=/bin/bash -c 'ip6tables -C INPUT -i lo -j ACCEPT 2>/dev/null || ip6tables -I INPUT -i lo -j ACCEPT'
+ExecStart=/bin/bash -c 'ip6tables -C INPUT -p ipv6-icmp -j ACCEPT 2>/dev/null || ip6tables -A INPUT -p ipv6-icmp -j ACCEPT'
+ExecStart=/bin/bash -c 'ip6tables -C INPUT -s fe80::/10 -j ACCEPT 2>/dev/null || ip6tables -A INPUT -s fe80::/10 -j ACCEPT'
+ExecStart=/bin/bash -c 'ip6tables -C INPUT -p tcp --dport 22 -j REJECT --reject-with tcp-reset 2>/dev/null || ip6tables -A INPUT -p tcp --dport 22 -j REJECT --reject-with tcp-reset'
+ExecStart=/bin/bash -c 'ip6tables -C INPUT -p tcp --dport 8443 -j REJECT 2>/dev/null || ip6tables -A INPUT -p tcp --dport 8443 -j REJECT'
+# docker 재시작·FORWARD 플러시로 docker 의 점프가 사라져도 VM 인터넷이 살아있게
+# lxdbr0 forward 를 명시적으로 허용한다. 사설망 REJECT 뒤에 와야 LAN 차단이 유지된다.
+ExecStart=/bin/bash -c 'iptables -C FORWARD -i lxdbr0 -j ACCEPT 2>/dev/null || iptables -A FORWARD -i lxdbr0 -j ACCEPT'
+ExecStart=/bin/bash -c 'iptables -C FORWARD -o lxdbr0 -j ACCEPT 2>/dev/null || iptables -A FORWARD -o lxdbr0 -j ACCEPT'
+# 브리지 포트 격리 — labd 도 하지만 부팅 시 labd 시작 전 틈을 없애려 여기서도 건다.
+ExecStart=/bin/bash -c 'for d in $(bridge link show | awk "/master lxdbr0/{gsub(/:/,\"\",$2); print $2}"); do bridge link set dev $d isolated on; done'
+[Install]
+WantedBy=multi-user.target

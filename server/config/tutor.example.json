@@ -1,0 +1,20 @@
+{
+  "endpoint": "http://127.0.0.1:4000/v1/chat/completions",
+  "model": "YOUR_MODEL_ID",
+  "api_key": "REPLACE_ON_HOST_ONLY",
+  "default_model": "qwen",
+  "models": {
+    "qwen": {"label": "Qwen 3.8 · 27B", "model": "qwen", "endpoint": "http://127.0.0.1:8002/v1/chat/completions", "api_key": ""},
+    "muse": {"label": "Muse Glimmer · 30B", "model": "muse", "endpoint": "http://127.0.0.1:8001/v1/chat/completions", "api_key": "", "chat_template_kwargs": {"reasoning_strength": "low"}},
+    "gemma": {"label": "Gemma 4 · 26B A4B", "model": "gemma", "endpoint": "http://127.0.0.1:8003/v1/chat/completions", "api_key": ""}
+  },
+  "max_tokens": 8192,
+  "request_timeout_seconds": 600,
+  "temperature": 0.3,
+  "retention_days": 30,
+  "history_turns": 12,
+  "rag_top_k": 4,
+  "guide_context_chars": 14000,
+  "max_concurrent_jobs": 4,
+  "terminal_context_enabled": true
+}

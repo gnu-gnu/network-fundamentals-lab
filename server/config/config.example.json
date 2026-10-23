@@ -1,0 +1,17 @@
+{
+  "image": "netlab",
+  "auth_mode": "open",
+  "cpu": 2,
+  "memory": "4GiB",
+  "disk": "50GiB",
+  "ip_prefix": "10.200.0.",
+  "ip_first": 20,
+  "ip_last": 199,
+  "pool_size": 0,
+  "reclaim_days": 7,
+  "idle_stop_hours": 24,
+  "ready_timeout": 300,
+  "access_team_domain": "your-team.cloudflareaccess.com",
+  "access_aud": "",
+  "access_auto_create": true
+}

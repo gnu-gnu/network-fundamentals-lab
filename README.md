@@ -3,6 +3,9 @@
 TCP/IP **기본 원리 하나**를 잡고, 그 개념이 깨졌을 때 나는 장애를 **직접 재현→관찰→수정**하며 체득하는 실습 시리즈.
 클라우드 특정 기능이 아니라 **어디서든 통하는 네트워크 기본기**를 다룬다. (AWS·K8s 등은 "실무 사례"로만 인용)
 
+브라우저로 실습을 제공하는 **Netlab 플랫폼**을 설치하거나 사용하려면
+[Netlab 플랫폼 README](README.netlab.md)를 참고하세요. 이 문서는 실습 콘텐츠 중심의 안내입니다.
+
 ## 철학 / 공통 포맷
 각 편은 아래 순서를 따른다:
 1. **개념 한 장** — 이 편이 가르치는 원리
@@ -24,6 +27,26 @@ TCP/IP **기본 원리 하나**를 잡고, 그 개념이 깨졌을 때 나는 �
 - 원칙: **고장이 기본값**, 수정은 `docker exec ... ip route replace ...` 같은 **한 줄**로.
 
 ## 실행 방법
+
+### 팀원용 웹 실습 서버
+
+브라우저 접속 → 실습 VM 발급 → 웹 터미널 실습을 제공하는 서버 소스도
+[`server/`](server/README.md)에 포함되어 있습니다. 기본은 공용 guest 환경이며,
+선택적으로 Cloudflare Access 기반 개인별 환경을 제공합니다. LXD VM 관리,
+관리자 콘솔, 세션 녹화·리플레이와 일부 챕터의 LLM 도움 기능을 제공합니다.
+
+- 플랫폼 소개·빠른 시작: [Netlab README](README.netlab.md)
+- 운영자: [설치·배포 안내](server/README.md), [상세 운영 문서](server/OPERATIONS.md)
+- 백업·이전: [암호화 백업과 빈 서버 복원](server/README.md#암호화-백업과-빈-서버-복원) (`netlab-backup` CLI)
+- 학습자: [웹 실습 사용 안내](server/README.md#팀원-사용-안내)
+- 로컬/단일 EC2에서 직접 실습하려면 아래 절차를 사용합니다.
+
+새 Ubuntu 24.04 x86_64 서버는 `sudo python3 server/bootstrap.py --apply`로
+LXD·전용 네트워크·스토리지·골든 VM 이미지·관리 서비스를 자동 설치할 수 있습니다.
+기본은 `http://서버IP:8088`에서 인증 없이 공용 guest 환경에 접속합니다.
+외부 공개와 인증은 설치자가 선택합니다. Cloudflare Access 선택 설정과 공유 환경의
+주의사항은 [서버 안내](server/README.md#새-ubuntu-서버-자동-설치)를 참고하세요.
+
 ### Linux (containerlab 설치된 경우)
 ```sh
 cd 01-l2-arp && sudo containerlab deploy -t 01-l2-arp.clab.yml

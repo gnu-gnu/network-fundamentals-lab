@@ -1,0 +1,12 @@
+[Unit]
+Description=Netlab dedicated firewall chains
+After=network-online.target snap.lxd.daemon.service docker.service
+Before=labd.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/netlab-admin/netguard.sh
+
+[Install]
+WantedBy=multi-user.target

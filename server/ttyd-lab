@@ -1,0 +1,29 @@
+#!/bin/bash
+# 브라우저 터미널 기동 래퍼.
+# 테마 JSON 에 중괄호와 따옴표가 섞여 있어 systemd ExecStart 에 직접 쓰면 깨진다.
+# 그래서 셸 스크립트로 감싼다.
+
+# 실습 환경 패널·문서와 같은 계열의 색을 쓴다 (짙은 슬레이트 + 청록 신호색).
+THEME='{
+ "background":"#0d1621","foreground":"#dbe6f1",
+ "cursor":"#3fc4dd","cursorAccent":"#0d1621","selectionBackground":"#22465a",
+ "black":"#16222f","red":"#f87171","green":"#4ade80","yellow":"#fbbf24",
+ "blue":"#60a5fa","magenta":"#c084fc","cyan":"#3fc4dd","white":"#c8d6e5",
+ "brightBlack":"#4a5f74","brightRed":"#fca5a5","brightGreen":"#86efac",
+ "brightYellow":"#fcd34d","brightBlue":"#93c5fd","brightMagenta":"#d8b4fe",
+ "brightCyan":"#7ddef0","brightWhite":"#f1f6fb"
+}'
+
+# 셸은 lab-session 을 거쳐 띄운다. 이 안에서 세션을 녹화한 뒤 login(1) 로 로그인한다.
+#   login 을 쓰는 이유: setpriv 는 uid/gid 만 바꾸고 HOME 을 그대로 둔다. ttyd 가 root 로
+#   도는 탓에 HOME=/root 인 채로 bash -l 이 실행되고, root 의 dotfile 을 읽어
+#   ~/.bash_aliases(별칭·함수)가 통째로 무시된다. login -f 는 PAM 세션을 제대로 열어
+#   HOME/USER/환경을 세팅하고 MOTD 도 띄운다.
+exec /usr/bin/ttyd \
+  --port 7681 --writable \
+  --client-option "theme=$(echo "$THEME" | tr -d '\n')" \
+  --client-option fontSize=13 \
+  --client-option 'fontFamily=ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace' \
+  --client-option cursorBlink=true \
+  --client-option scrollback=10000 \
+  /usr/local/bin/lab-session
