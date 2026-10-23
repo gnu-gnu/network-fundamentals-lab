@@ -37,7 +37,7 @@ FILES = (
     'netlab-user', 'netlab-record', 'netlab-backup',
     'lab-session', 'lab-shell.sh', 'ttyd-lab', 'apply-shell.sh', 'netguard.sh', 'guest-bootstrap.sh',
     'nginx-netlab.conf', 'nginx-open.conf', 'lxd-preseed-zfs.yaml',
-    'README.md', 'OPERATIONS.md', 'DEVELOPMENT.md', 'THIRD_PARTY.md',
+    'README.md', 'OPERATIONS.md', 'THIRD_PARTY.md',
     'knowledge/corpus.json',
 ) + _tree('netlab/*.py', 'templates/*.html', 'assets/*', 'systemd/*')
 
