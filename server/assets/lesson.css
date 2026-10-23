@@ -1,0 +1,40 @@
+/* Learning pack v2 lesson panel. Sits next to the terminal on wide screens and wraps below it on
+   narrow ones; it never overlays the terminal. Colors come from the panel's theme tokens. */
+.lessonside{flex:1 1 320px;min-width:min(300px,100%);max-width:100%;background:var(--panel);
+  border:1px solid var(--wire);border-radius:10px;padding:16px 18px}
+.lessonside[hidden]{display:none}
+.lesson-heading{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
+.lesson-badge{font-size:11px;font-weight:600;color:var(--sig);border:1px solid var(--sig);border-radius:999px;padding:1px 7px;margin-left:6px}
+.lesson-pick{display:flex;align-items:center;gap:8px;margin:10px 0 4px;font-size:14px}
+.lesson-pick select{font:inherit;color:var(--ink);background:var(--panel);border:1px solid var(--wire);border-radius:6px;padding:4px 6px;min-width:0;flex:1}
+.lesson-actions{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0}
+.lesson-actions button,.lesson-row button{padding:7px 12px;font-size:14px}
+.lesson-note{border-left:3px solid var(--warn);background:var(--panel2);padding:8px 12px;border-radius:0 7px 7px 0;font-size:13.5px;color:var(--ink2);margin:8px 0}
+.lesson-note div+div{margin-top:4px}
+.lesson-done{border-left:3px solid var(--ok);background:var(--okbg);padding:8px 12px;border-radius:0 7px 7px 0;font-size:14px;margin:8px 0}
+.lesson-steps{list-style:none;margin:6px 0 0;padding:0;display:flex;flex-direction:column;gap:10px}
+.lesson-step{border:1px solid var(--wire);border-radius:9px;padding:10px 12px;min-width:0}
+.lesson-step-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.lesson-step-no{font-family:var(--mono);font-size:12px;color:var(--ink3)}
+.lesson-req{font-size:11px;color:var(--ink3);border:1px solid var(--wire);border-radius:999px;padding:0 6px}
+.lesson-chip{margin-left:auto;font-size:12px;border-radius:999px;padding:1px 8px;background:var(--panel2);color:var(--ink2)}
+.lesson-chip.s-pass,.lesson-chip.s-done{background:var(--okbg);color:var(--ok)}
+.lesson-chip.s-fail{background:var(--panel2);color:var(--warn)}
+.lesson-chip.s-unverifiable,.lesson-chip.s-error{background:var(--critbg);color:var(--crit)}
+.lesson-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+.lesson-small{margin-top:8px;padding:5px 10px;font-size:13px}
+.lesson-step details{margin-top:8px}
+.lesson-step summary{cursor:pointer;color:var(--sig);font-size:14px}
+.lesson-body{max-height:380px;overflow:auto;margin-top:8px;padding-right:4px;font-size:14.5px;line-height:1.7;overflow-wrap:anywhere}
+.lesson-body h1{font-size:19px}.lesson-body h2{font-size:17px;margin-top:18px}.lesson-body h3{font-size:15px}
+.lesson-body .table-scroll{overflow:auto}.lesson-body table{border-collapse:collapse}
+.lesson-body td,.lesson-body th{border:1px solid var(--wire);padding:4px 8px}
+.lesson-body pre,.lesson-item pre{background:var(--panel2);border:1px solid var(--wire);border-radius:7px;padding:10px;overflow:auto;
+  font:12.5px/1.55 var(--mono);white-space:pre;max-width:100%}
+.lesson-body .lesson-pre{position:relative;padding-top:28px}
+.lesson-copy{position:absolute;top:4px;right:4px;padding:2px 8px;font-size:12px}
+.lesson-body code{font-family:var(--mono);font-size:.9em}
+.lesson-hints{margin:8px 0 0;padding-left:20px;font-size:14px}
+.lesson-hints:empty{display:none}
+.lesson-item{margin-top:6px;font-size:13px}
+.lesson-item pre{white-space:pre-wrap;max-height:160px}

@@ -86,6 +86,7 @@
 <link rel=stylesheet href="assets/tutor.css">
 <link rel=stylesheet href="assets/community.css">
 <link rel=stylesheet href="assets/notice.css">
+<link rel=stylesheet href="assets/lesson.css">
 <div class=wrap>
   <header class=panel-header><div>
   <p class=eyebrow>Network Fundamentals Lab</p>
@@ -139,6 +140,21 @@
         </div>
         <iframe id=termframe title="실습 터미널"></iframe>
       </div>
+      <section class=lessonside id=lessonpanel hidden aria-labelledby=lessonheading>
+        <div class=lesson-heading><div class=t id=lessonheading>단계형 실습<span class=lesson-badge>시범</span></div>
+          <button type=button id=lessonrefresh class=lesson-small>상태 새로고침</button></div>
+        <label class=lesson-pick for=lessonpick>실습 <select id=lessonpick></select></label>
+        <div id=lessonenv class=d role=status aria-live=polite></div>
+        <div id=lessonnote class=lesson-note hidden></div>
+        <div class=lesson-actions>
+          <button type=button id=lessonstart class=primary>시작</button>
+          <button type=button id=lessonreset>초기화</button>
+          <button type=button id=lessonstop>종료</button>
+        </div>
+        <div id=lessondone class=lesson-done hidden></div>
+        <ol id=lessonsteps class=lesson-steps></ol>
+        <div id=lessonstatus class=d role=status aria-live=polite></div>
+      </section>
       <div class=helpside id=tutorpanel hidden role=region aria-label="AI 실습 튜터">
         <div class=tutor-heading><div class=t>AI 실습 튜터</div><button type=button id=tutorclose aria-label="튜터 닫기">닫기 ×</button></div>
         <button type=button id=tutormodel aria-haspopup=dialog>모델 선택</button>
@@ -292,3 +308,4 @@ refresh(); setInterval(()=>{if(!busy)refresh();},10000);
 <script src="assets/community-transport.js"></script>
 <script src="assets/community.js"></script>
 <script src="assets/notice.js"></script>
+<script src="assets/lesson.js"></script>
