@@ -108,6 +108,13 @@ alias cins='containerlab inspect -t'
 alias nodes='docker ps --filter name=clab- --format "table {{.Names}}\t{{.Status}}"'
 
 # 실습 목록 보기
+# 학습 팩 v2 실행기가 설치된 VM 에서는 등록된 단계형 실습을 실행기로 다룬다. 웹 패널과 같은
+# 잠금·세대를 쓰므로 터미널에서 바꾼 실습을 웹이 다시 배포하지 않고 이어 받는다. 실행기가 없는 VM 은
+# 아래의 기존 동작 그대로다.
+NETLAB_RUNNER=/opt/netlab/current/runner/netlab-runner
+__lab_has_runner() { [ -x "$NETLAB_RUNNER" ]; }
+__lab_runner() { sudo -n "$NETLAB_RUNNER" --cli "$@"; }
+
 labs() {
   echo "사용 가능한 실습 (lab <번호> 로 배포):"
   local d
@@ -122,6 +129,19 @@ labs() {
 # lab 17 bgp    → 토폴로지가 여러 개인 장은 이름을 덧붙인다
 lab() (
   if [ -z "${1-}" ]; then labs; return 0; fi
+  if __lab_has_runner; then
+    case "$1" in
+      check) __lab_runner check; return ;;          # 참고용 확인. 학습 기록은 웹 확인 버튼으로 남는다
+      reset) __lab_runner reset; return ;;
+    esac
+    if __lab_runner resolve "$1" "${2-}" >/dev/null 2>&1; then
+      __lab_logevent deploy "v2:$1${2:+ $2}"
+      __lab_runner start "$1" "${2-}"
+      return
+    fi
+    # 등록되지 않은 실습은 기존 방식으로 띄운다. 실행기가 맡고 있던 실습은 먼저 실행기로 내린다.
+    __lab_runner release || return 1
+  fi
   local dir topo list
   dir=$(ls -d "$HOME"/network-lab/"$1"* 2>/dev/null | head -1)
   if [ -z "$dir" ]; then echo "그런 실습이 없습니다: $1"; labs; return 1; fi
@@ -185,6 +205,7 @@ __lab_destroy_others() {
 
 # 실행 중인 토폴로지 철거
 unlab() (
+  if __lab_has_runner; then __lab_runner release || return 1; fi
   local switch_fd
   exec {switch_fd}>"$HOME/.netlab-switch.lock" || return 1
   flock -n "$switch_fd" || { echo "다른 터미널에서 실습을 전환 중입니다."; return 1; }
@@ -258,6 +279,7 @@ help-lab() {
   pingfrom h1 10.10.10.2
   doc 01 / walk 01     실습 설명 / 해설 문서
   lab-reset            환경 전체 초기화
+  lab check / lab reset  단계형 실습: 참고용 확인 / 처음 상태로 (실행기가 있는 환경)
 
   네트워크 확인
   ─────────────────────────────────────────────────────────────
