@@ -53,15 +53,36 @@ def run(*args):
 
 
 def source_revision():
-    """배포한 소스의 git 커밋·브랜치·수정 여부. git 저장소가 아니면 None (어느 커밋이 올라갔는지 추적용)."""
+    """배포한 소스의 git 커밋·브랜치·수정 여부. 어느 커밋이 올라갔는지 추적용.
+
+    git 저장소에서 실행하면 git 에서 읽고, tar 로 옮긴 사본이면 보내는 쪽이 만든
+    .release-source.json 을 쓴다. 둘 다 없으면 None.
+    """
     try:
         git = ['git', '-C', str(SOURCE)]
         head = subprocess.run([*git, 'rev-parse', 'HEAD'], capture_output=True, text=True, check=True).stdout.strip()
         branch = subprocess.run([*git, 'rev-parse', '--abbrev-ref', 'HEAD'], capture_output=True, text=True).stdout.strip()
         dirty = bool(subprocess.run([*git, 'status', '--porcelain', '--', '.'], capture_output=True, text=True).stdout.strip())
-        return {'commit': head, 'branch': branch, 'dirty': dirty, 'deployed': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}
+        info = {'commit': head, 'branch': branch, 'dirty': dirty}
     except (OSError, subprocess.CalledProcessError):
-        return None
+        try:
+            info = json.loads((SOURCE / '.release-source.json').read_text())
+            info = {k: info.get(k) for k in ('commit', 'branch', 'dirty', 'tag')}
+        except (OSError, ValueError):
+            return None
+    info['deployed'] = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+    return info
+
+
+def write_release_source():
+    """tar 전송 전에 호출: git 정보를 .release-source.json 으로 남긴다 (--stamp)."""
+    info = source_revision()
+    if not info:
+        raise RuntimeError('Not a git checkout; nothing to stamp')
+    tag = subprocess.run(['git', '-C', str(SOURCE), 'describe', '--tags', '--exact-match'], capture_output=True, text=True).stdout.strip()
+    info = {'commit': info['commit'], 'branch': info['branch'], 'dirty': info['dirty'], 'tag': tag or None}
+    (SOURCE / '.release-source.json').write_text(json.dumps(info, indent=2) + '\n')
+    print(f"Stamped {info['branch']}@{info['commit'][:12]}" + (f" tag {tag}" if tag else '') + (' (uncommitted changes)' if info['dirty'] else ''))
 
 
 def validate_source():
@@ -215,7 +236,7 @@ def deploy():
         print(f'Deployed; backup: {backup}')
         if manifest['_source']:
             src = manifest['_source']
-            print(f"Source: {src['branch']}@{src['commit'][:12]}" + (' (uncommitted changes)' if src['dirty'] else ''))
+            print(f"Source: {src['branch']}@{src['commit'][:12]}" + (f" tag {src['tag']}" if src.get('tag') else '') + (' (uncommitted changes)' if src['dirty'] else ''))
         print('Existing /etc/netlab, live nginx site, network units and VMs preserved.')
     except BaseException:
         if saved:
@@ -287,6 +308,7 @@ def main():
     mode.add_argument('--apply', action='store_true', help='backup and update existing host')
     mode.add_argument('--prepare', action='store_true', help='prepare a new host; do not start services')
     mode.add_argument('--source-check', action='store_true', help='validate checkout without a server')
+    mode.add_argument('--stamp', action='store_true', help='write .release-source.json from git before a tar transfer')
     args = parser.parse_args()
     # Serialize deployments, including their backup and rollback stages.
     deployment_lock = None
@@ -296,6 +318,9 @@ def main():
             raise RuntimeError('Run on the server with sudo')
         deployment_lock = open('/run/lock/netlab-deploy.lock', 'a')
         fcntl.flock(deployment_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    if args.stamp:
+        write_release_source()
+        return
     validate_source()
     if args.source_check:
         print('Source validation passed')

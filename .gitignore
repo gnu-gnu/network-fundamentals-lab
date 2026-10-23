@@ -19,3 +19,6 @@ server/**/tutor.json
 server/**/config.json
 server/**/*.htpasswd
 server/**/.env
+
+# tar 전송용 소스 스탬프 (deploy.py --stamp 가 만든다)
+server/.release-source.json
