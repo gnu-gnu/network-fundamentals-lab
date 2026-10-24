@@ -69,13 +69,15 @@ sudo python3 server/deploy.py --apply
 
 ### Nginx 사이트의 auth_request 헤더 갱신 (2026-10 이후 필수)
 
-labd는 이제 요청 URI 대신 사용자별 location 에 고정된 `target` 인자로 환경 소유자를 판정한다.
+labd는 요청 URI 대신 사용자별 내부 인증 location이 고정해서 보내는 대상 계정 헤더로 환경 소유자를 판정한다.
+인증 URI는 `/_netlab_access_계정`이며, 쿼리나 클라이언트 헤더로 대상을 선택하지 않는다.
+`auth_request /_access?target=...` 방식은 nginx가 쿼리를 경로로 취급해 404와 500을 일으키므로 사용하지 않는다.
 운영 사이트(`/etc/nginx/sites-available/netlab`)가 옛 템플릿(`X-Original-URI`)이면 `--check`가
 실패하고, labd도 Access 요청을 모두 거부한다(검사를 건너뛰어 열어 두지 않는다). 배포 전에 한 번 갱신한다.
 
 ```bash
 sudo cp -p /etc/nginx/sites-available/netlab /etc/nginx/sites-available/netlab.bak
-sudo sed -i 's|^\( *\)proxy_set_header X-Original-URI [$]request_uri;|&\n\1proxy_set_header X-Lab-Target-User $arg_target;\n\1proxy_set_header X-Lab-Auth-Scheme target;|' /etc/nginx/sites-available/netlab
+sudo sed -i 's|^\( *\)proxy_set_header X-Original-URI [$]request_uri;|&\n\1proxy_set_header X-Lab-Target-User "";\n\1proxy_set_header X-Lab-Auth-Scheme target;|' /etc/nginx/sites-available/netlab
 sudo grep -c 'X-Lab-Auth-Scheme target' /etc/nginx/sites-available/netlab   # 2 가 정상
 sudo nginx -t && sudo systemctl reload nginx
 ```
@@ -83,6 +85,12 @@ sudo nginx -t && sudo systemctl reload nginx
 옛 `X-Original-URI` 줄은 새 labd 가 무시하므로 배포 중에 남아 있어도 되며, 배포가 끝난 뒤 지워도 된다.
 이 순서(사이트 갱신 → labd 배포)면 옛 labd 와 새 labd 모두 자기 헤더를 받아 중단 구간이 없다.
 사용자별 스니펫(`/etc/nginx/netlab.d/*-users.conf`)은 labd 가 기동할 때 다시 생성하므로 손대지 않는다.
+실제 nginx의 서브요청·헤더 전달 회귀 검증은 격리된 임시 서버로 실행한다.
+다음 명령에는 nginx 실행 권한이 필요하며 운영 사이트·VM·JWT를 변경하지 않는다.
+
+```bash
+sudo python3 server/tests/integration_nginx_auth.py
+```
 
 기본 동작은 읽기 전용 검사다. `--apply`는 의존성·JSON·LXD 이미지·Nginx를 검사하고,
 labd와 채팅 서비스를 정지한 뒤 `/var/backups/netlab/release-*`에 코드·CLI·서비스 unit을 백업한다.

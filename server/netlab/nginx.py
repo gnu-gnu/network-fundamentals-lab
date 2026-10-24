@@ -28,10 +28,9 @@ def _guard(mode, ht, user):
     if mode == "lan":
         return ('        auth_basic           "네트워크 실습 환경";\n'
                 f'        auth_basic_user_file {ht};')
-    # Pass the statically generated location owner in the internal subrequest.
-    # Never derive authorization from $request_uri: nginx selects locations using
-    # a decoded/normalized URI while $request_uri retains the original spelling.
-    return f"        auth_request /_access?target={user};"
+    # auth_request doesn't split query arguments from its URI. Use an exact
+    # internal location whose upstream headers fix the owner server-side.
+    return f"        auth_request /_netlab_access_{user};"
 
 
 def render(mode, users):
@@ -56,6 +55,18 @@ def render(mode, users):
         # 죽은 주소에 매달려 응답이 멈춘다.
         ip = rec.get("ip") if rec.get("status") == "running" else None
         guard = _guard(mode, ht, u)
+
+        if mode == 'tunnel':
+            out.append(f'''
+    location = /_netlab_access_{u} {{
+        internal;
+        proxy_pass http://127.0.0.1:9000/_access;
+        proxy_pass_request_body off;
+        proxy_set_header Content-Length "";
+        proxy_set_header X-Lab-Target-User "{u}";
+        proxy_set_header X-Lab-Auth-Scheme target;
+    }}
+''')
 
         out.append(f"""
     location = /u/{u} {{ return 301 /u/{u}/ctl/; }}

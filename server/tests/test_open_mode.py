@@ -75,9 +75,13 @@ class OpenModeTests(unittest.TestCase):
 
     def test_tunnel_authorization_uses_static_location_owner(self):
         routes = nginx.render('tunnel', ['alice'])
-        self.assertIn('auth_request /_access?target=alice;', routes)
+        self.assertIn('auth_request /_netlab_access_alice;', routes)
+        self.assertIn('location = /_netlab_access_alice {', routes)
+        self.assertIn('proxy_set_header X-Lab-Target-User "alice";', routes)
+        self.assertNotIn('/_access?target=', routes)
         template = (Path(__file__).parents[1] / 'nginx-netlab.conf').read_text()
-        self.assertIn('proxy_set_header X-Lab-Target-User $arg_target;', template)
+        self.assertIn('proxy_set_header X-Lab-Target-User "";', template)
+        self.assertNotIn('$arg_target', template)
         self.assertEqual(template.count('proxy_set_header X-Lab-Auth-Scheme target;'), 2)
         self.assertNotIn('X-Original-URI', template)
 
