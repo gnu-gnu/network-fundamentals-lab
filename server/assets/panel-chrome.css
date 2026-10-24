@@ -1,0 +1,28 @@
+/* Shared geometry for page navigation, environment actions and workspace tools. */
+.ui-icon{display:inline-block;width:18px;height:18px;flex:none;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;vertical-align:middle}
+.panel-header{align-items:center;gap:20px;padding:0 0 22px;border-bottom:1px solid var(--wire);margin-bottom:20px}
+.panel-brand h1{font-size:24px;margin:0;line-height:1.3}.panel-brand .eyebrow{font-size:10px;letter-spacing:.15em;margin-bottom:6px}
+.header-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+.chrome-button,.header-actions .notice-launcher,.header-actions .theme-toggle{display:inline-flex;align-items:center;justify-content:center;gap:8px;height:40px;min-height:40px;padding:0 12px;margin:0;border-radius:8px;font-size:13px;line-height:1.2;background:var(--panel);border:1px solid var(--wire);color:var(--ink2)}
+.account-chip{display:inline-flex;align-items:center;gap:8px;min-height:40px;padding:0 12px;border-left:1px solid var(--wire);margin-left:4px;color:var(--ink2);font-size:13px;max-width:220px}.account-chip span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#themeicon{display:inline-flex;align-items:center}.theme-moon{display:none}#themeicon[data-mode=dark] .theme-sun{display:none}#themeicon[data-mode=dark] .theme-moon{display:block}
+.controlbar{position:relative;display:flex;align-items:center;gap:16px;padding:16px 18px;border:1px solid var(--wire);border-radius:12px;background:var(--panel);margin-bottom:18px}
+.controlbar .ctl{border:0;border-radius:0;padding:0;background:transparent;gap:8px}.controlbar .ctl.grow{flex:1 1 300px;min-width:0}
+.status-copy{min-width:0}.status-copy>.t{display:none}.controlbar .state{font:600 14px/1.4 ui-sans-serif,system-ui,sans-serif;gap:7px}
+.controlbar .meta{margin-top:7px;gap:3px 14px;font-size:11px;overflow-wrap:anywhere}
+.environment-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.environment-more{position:relative}
+.environment-menu{position:absolute;right:0;top:calc(100% + 8px);min-width:190px;padding:6px;z-index:45;border:1px solid var(--wire);border-radius:10px;background:var(--panel);box-shadow:0 12px 36px #0002}
+.environment-menu button{display:flex;align-items:center;gap:10px;width:100%;height:40px;padding:0 10px;border:0;background:transparent;text-align:left;border-radius:6px;font-size:13px}
+.environment-menu button:hover,.environment-menu button:focus-visible{background:var(--critbg);color:var(--crit)}
+.controlbar .hide,.assist-dock .hide,.environment-menu[hidden]{display:none}
+.termhead{min-height:46px;padding:6px 12px;gap:8px;border-bottom:1px solid var(--wire)}
+.terminal-title{display:inline-flex;align-items:center;gap:8px;font-size:12px;font-weight:600;color:var(--ink2)}
+.termtools{gap:8px;align-items:center}.terminal-theme{gap:7px;font-size:12px}
+#terminaltheme{height:32px;max-width:min(205px,47vw);padding:0 8px;font-size:12px;border-radius:7px}
+.termhead .tool-button{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:32px;padding:0 8px;border:1px solid var(--wire);border-radius:7px;background:var(--panel);color:var(--ink2);font-size:12px}.tool-button .ui-icon{width:16px;height:16px}.tool-button:focus-visible{outline:2px solid var(--sig);outline-offset:2px}
+.assist-dock{display:flex;align-items:center;gap:8px;position:fixed;right:max(20px,env(safe-area-inset-right));bottom:max(20px,env(safe-area-inset-bottom));z-index:40}
+.assist-dock .tutor-launcher,.assist-dock .community-launcher{position:static;display:inline-flex;align-items:center;justify-content:center;gap:8px;height:44px;padding:0 14px;border-radius:12px;box-shadow:0 5px 22px #0002;font-size:13px;line-height:1.2;font-weight:600}
+.assist-dock .community-launcher{background:var(--panel);color:var(--ink2)}.assist-dock .hide{display:none}
+.tutor-heading .chrome-button,.community-heading .chrome-button,.notice-heading .chrome-button{height:32px;min-height:32px;padding:0 8px;font-size:12px}.chrome-button .ui-icon{width:18px;height:18px}
+@media(max-width:700px){.panel-header{flex-wrap:wrap;gap:14px;padding-bottom:16px}.panel-brand h1{font-size:22px}.header-actions{width:100%;justify-content:flex-start}.account-chip{margin-left:auto;max-width:44vw;padding-right:0}.controlbar{gap:12px;padding:14px}.controlbar .ctl.grow{flex-basis:100%}.environment-actions{width:100%}.environment-more{margin-left:auto}.termtools{gap:6px}.termhead{padding:7px 9px}.assist-dock{right:16px;bottom:16px}.wrap{padding-top:22px}}
+@media(max-width:420px){.terminal-title{font-size:11px}.terminal-title .ui-icon{width:15px;height:15px}.termhead .terminal-theme{font-size:0;gap:0}#terminaltheme{max-width:155px;font-size:11px}.termhead .tool-button{font-size:11px}.account-chip{font-size:12px;padding-left:10px}}

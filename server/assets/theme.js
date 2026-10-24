@@ -12,7 +12,9 @@
     if(!button)return;
     button.setAttribute('aria-pressed',String(dark));
     button.title=dark?'라이트 테마로 전환':'다크 테마로 전환';
-    document.getElementById('themeicon').textContent=dark?'☾':'☀';
+    const icon=document.getElementById('themeicon');
+    if(icon.querySelector('svg'))icon.dataset.mode=dark?'dark':'light';
+    else icon.textContent=dark?'☾':'☀';
     document.getElementById('themelabel').textContent=dark?'다크':'라이트';
   }
   apply();

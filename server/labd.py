@@ -65,7 +65,8 @@ def render_panel(user):
 ASSET_TYPES = {".js": "application/javascript", ".css": "text/css"}
 USER_ASSETS = {"player.js", "player.css", "replay.js", "replay.css", "tutor.js", "tutor.css",
                "community.js", "community.css", "community-transport.js",
-               "notice.js", "notice.css", "theme.js", "terminal-theme.js", "lesson.js", "lesson.css"}
+               "notice.js", "notice.css", "theme.js", "terminal-theme.js", "lesson.js", "lesson.css",
+               "panel-chrome.css"}
 ADMIN_ASSETS = {"player.js", "player.css", "replay.js", "replay.css",
                 "community-transport.js", "community-presence.js", "admin-models.js", "admin-models.css"}
 
