@@ -67,6 +67,16 @@ sudo python3 server/deploy.py --check
 sudo python3 server/deploy.py --apply
 ```
 
+배포할 소스는 커밋된 상태여야 한다. tar 로 옮길 때는 보내기 전에 저장소에서 `python3 server/deploy.py --stamp` 를
+실행한다(커밋·태그와 조상 커밋 목록이 `.release-source.json` 에 남는다). `--check`·`--apply` 는 운영의
+`release-manifest.json` 기록을 보고 다음이면 멈춘다. 운영 코드가 미커밋 변경으로 배포돼 있을 때, 운영 커밋이 새 소스에
+포함되지 않을 때, 새 소스 자체에 미커밋 변경이 있을 때다. 운영에만 있는 변경을 덮어써 잃지 않게 하려는 것이다.
+그 변경을 먼저 병합한 뒤 배포하고, 이전 커밋으로 되돌리는 경우처럼 의도한 때만 `--allow-source-overwrite` 를 붙인다.
+
+`--apply` 는 서비스 상태 확인 뒤 라이브 사이트의 server 블록마다 사용자 경로(`/u/<계정>/ctl/status`)를 자격 증명
+없이 불러 본다. 인증이 걸린 위치는 401, 공개 모드는 200 만 정상이다. 그 밖의 응답(5xx·404·nginx 자체의 403)이면
+사용자별 nginx 위치나 인증 하위 요청이 깨진 것으로 보고 이전 코드로 되돌린다.
+
 ### Nginx 사이트의 auth_request 헤더 갱신 (2026-10 이후 필수)
 
 labd는 요청 URI 대신 사용자별 내부 인증 location이 고정해서 보내는 대상 계정 헤더로 환경 소유자를 판정한다.

@@ -82,6 +82,8 @@ def write_release_source():
         raise RuntimeError('Not a git checkout; nothing to stamp')
     tag = subprocess.run(['git', '-C', str(SOURCE), 'describe', '--tags', '--exact-match'], capture_output=True, text=True).stdout.strip()
     info = {'commit': info['commit'], 'branch': info['branch'], 'dirty': info['dirty'], 'tag': tag or None}
+    # 대상 서버에는 git 이 없으므로, 운영 커밋이 이 소스에 포함되는지 볼 수 있게 조상 목록을 같이 보낸다.
+    info['ancestors'] = run('git', '-C', str(SOURCE), 'rev-list', 'HEAD').split()
     (SOURCE / '.release-source.json').write_text(json.dumps(info, indent=2) + '\n')
     print(f"Stamped {info['branch']}@{info['commit'][:12]}" + (f" tag {tag}" if tag else '') + (' (uncommitted changes)' if info['dirty'] else ''))
 
@@ -130,6 +132,56 @@ def validate_source():
             raise RuntimeError('Nginx source must contain placeholders only')
 
 
+def source_contains(commit):
+    """이 소스가 commit 을 조상으로 포함하는가. git 사본이면 git 으로, tar 사본이면 --stamp 의 조상 목록으로 본다.
+    판단할 수 없으면 None."""
+    git = ['git', '-C', str(SOURCE)]
+    try:
+        if subprocess.run([*git, 'rev-parse', '--git-dir'], capture_output=True).returncode == 0:
+            if subprocess.run([*git, 'cat-file', '-e', f'{commit}^{{commit}}'], capture_output=True).returncode:
+                return False
+            return subprocess.run([*git, 'merge-base', '--is-ancestor', commit, 'HEAD'],
+                                  capture_output=True).returncode == 0
+    except OSError:
+        pass
+    try:
+        ancestors = json.loads((SOURCE / '.release-source.json').read_text()).get('ancestors')
+    except (OSError, ValueError):
+        return None
+    return commit in ancestors if isinstance(ancestors, list) else None
+
+
+def check_running_source(running, source):
+    """운영 중인 코드가 git 밖 변경이거나 새 소스에 없는 커밋이면, 덮어써서 그 변경을 잃지 않도록 멈춘다.
+
+    running 은 운영 release-manifest 의 _source, source 는 이번 소스의 source_revision().
+    """
+    if source is None or source.get('dirty'):
+        raise RuntimeError('Source has uncommitted changes or no git record; deploy a committed, stamped checkout '
+                           '(python3 server/deploy.py --stamp)')
+    if not running:
+        print('Note: running release has no source record; skipping overwrite check')
+        return
+    where = f"{running.get('branch')}@{str(running.get('commit'))[:12]} (deployed {running.get('deployed')})"
+    if running.get('dirty'):
+        raise RuntimeError(f'Running code was deployed from uncommitted changes: {where}. Commit those changes '
+                           'into this source first, or pass --allow-source-overwrite after checking them')
+    contained = source_contains(running.get('commit') or '')
+    if contained is None:
+        raise RuntimeError('Cannot tell whether the running commit is in this source; re-stamp the checkout '
+                           '(python3 server/deploy.py --stamp)')
+    if not contained:
+        raise RuntimeError(f'Running commit {where} is not in this source; deploying would drop its changes. '
+                           'Merge it first, or pass --allow-source-overwrite (e.g. for a rollback)')
+
+
+def running_source():
+    try:
+        return json.loads((DEST / 'release-manifest.json').read_text()).get('_source')
+    except (OSError, ValueError):
+        return None
+
+
 SITE = Path('/etc/nginx/sites-available/netlab')
 
 
@@ -141,7 +193,7 @@ def check_site(text):
                            'update /etc/nginx/sites-available/netlab first (README: 기존 운영 서버 업데이트)')
 
 
-def preflight():
+def preflight(allow_source_overwrite=False):
     if os.geteuid() != 0:
         raise RuntimeError('Run on the server with sudo')
     for name in ('lxc', 'nginx', 'systemctl', 'bash', 'htpasswd'):
@@ -163,6 +215,10 @@ def preflight():
     run('systemctl', 'is-active', 'labd', 'nginx')
     if SITE.is_file():
         check_site(SITE.read_text())
+    if allow_source_overwrite:
+        print('Warning: --allow-source-overwrite; running code may be replaced by an unrelated source')
+    else:
+        check_running_source(running_source(), source_revision())
 
 
 def ensure_community_runtime():
@@ -235,8 +291,73 @@ def health():
     raise RuntimeError('labd did not become ready')
 
 
-def deploy():
-    preflight()
+USER_SNIPPETS = re.compile(r'include\s+(\S+-users\.conf)\s*;')
+USER_PANEL = re.compile(r'location /u/([^/\s]+)/ctl/ \{')
+
+
+def user_route_targets(site):
+    """라이브 사이트의 server 블록마다 (접속 주소, 사용자 스니펫) 을 고른다.
+
+    listen 이 포트만 있는 블록은 127.0.0.1 에 더 구체적인 블록이 있으면 127.0.0.2 로 접속해 그 블록에 닿게 한다.
+    """
+    blocks = re.split(r'(?m)^server\s*\{', site)[1:]
+    parsed = []
+    for block in blocks:
+        listen = re.search(r'listen\s+([^;]+);', block)
+        snippet = USER_SNIPPETS.search(block)
+        if listen and snippet and 'ssl' not in listen.group(1).split():
+            parsed.append((listen.group(1).split()[0], snippet.group(1)))
+    specific = {addr.split(':')[0] for addr, _ in parsed if ':' in addr}
+    targets = []
+    for addr, snippet in parsed:
+        if ':' in addr:
+            host, port = addr.rsplit(':', 1)
+        else:
+            host, port = ('127.0.0.2' if '127.0.0.1' in specific else '127.0.0.1'), addr
+        targets.append((f'{host}:{port}', snippet))
+    return targets
+
+
+def check_user_routes(site_path=SITE, attempts=20):
+    """배포 직후 사용자 경로를 자격 증명 없이 한 번씩 불러 본다. 인증이 걸린 위치는 401, 공개 위치는 200 만 정상이다.
+
+    labd 와 Basic 인증은 자격 증명 없는 요청에 401 을 준다. 그 밖의 응답(5xx·404·nginx 자체의 403)은 사용자별 위치나
+    인증 하위 요청이 깨졌다는 뜻이라 실패로 보고 롤백한다(2026-10-24 장애에서는 하위 요청 404 → 500).
+    """
+    if not site_path.is_file():
+        return
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    for target, snippet in user_route_targets(site_path.read_text()):
+        try:
+            text = Path(snippet).read_text()
+        except OSError:
+            continue
+        user = USER_PANEL.search(text)
+        if not user:
+            continue
+        block = text[user.end():text.find('}', user.end())]
+        expected = 401 if ('auth_request' in block or 'auth_basic' in block) else 200
+        url = f'http://{target}/u/{user.group(1)}/ctl/status'
+        status = None
+        for _ in range(attempts):
+            try:
+                with opener.open(urllib.request.Request(url, headers={'Host': 'localhost'}), timeout=3) as r:
+                    status = r.status
+            except urllib.error.HTTPError as e:
+                status = e.code
+            except OSError:
+                status = None
+            if status == expected:
+                break
+            time.sleep(1)
+        if status != expected:
+            raise RuntimeError(f'User route check failed: {Path(snippet).name} /u/<user>/ctl/status -> {status} '
+                               f'(expected {expected})')
+    print('User routes answer without server errors')
+
+
+def deploy(allow_source_overwrite=False):
+    preflight(allow_source_overwrite)
     ensure_community_runtime()
     backup_root = Path('/var/backups/netlab')
     backup_root.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -263,6 +384,7 @@ def deploy():
         run('systemctl', 'enable', 'netlab-community')
         run('systemctl', 'restart', 'netlab-community')
         health()
+        check_user_routes()
         manifest = {name: hashlib.sha256((DEST / name).read_bytes()).hexdigest() for name in FILES}
         manifest['_source'] = source_revision()
         (DEST / 'release-manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
@@ -342,6 +464,8 @@ def main():
     mode.add_argument('--prepare', action='store_true', help='prepare a new host; do not start services')
     mode.add_argument('--source-check', action='store_true', help='validate checkout without a server')
     mode.add_argument('--stamp', action='store_true', help='write .release-source.json from git before a tar transfer')
+    parser.add_argument('--allow-source-overwrite', action='store_true',
+                        help='deploy even if the running code is uncommitted or not in this source (rollbacks)')
     args = parser.parse_args()
     # Serialize deployments, including their backup and rollback stages.
     deployment_lock = None
@@ -360,9 +484,9 @@ def main():
     elif args.prepare:
         prepare()
     elif args.apply:
-        deploy()
+        deploy(args.allow_source_overwrite)
     else:
-        preflight()
+        preflight(args.allow_source_overwrite)
         print('Preflight passed; --apply will briefly restart labd (not VMs, Docker or nginx)')
 
 
