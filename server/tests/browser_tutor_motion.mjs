@@ -13,7 +13,7 @@ await cmd('Runtime.enable');await cmd('Page.enable');
 await cmd('Page.navigate',{url:(process.argv[2]||process.env.NETLAB_URL||(()=>{console.error('usage: node browser_tutor_motion.mjs <panel url>  (or NETLAB_URL)');process.exit(2)})())});
 await wait('typeof tutorSend==="function"');
 // Exercise the UI even when the test VM is idle/stopped; never start a VM.
-await ev('refresh().then(()=>document.getElementById("running").classList.remove("hide"))');
+await ev('refresh().then(()=>{document.getElementById("running").classList.remove("hide");document.getElementById("tutorlauncher").classList.remove("hide")})');
 const results=[];
 for(const width of [2048,1600,1400,1366,768,390]){
   await cmd('Emulation.setDeviceMetricsOverride',{width,height:900,deviceScaleFactor:1,mobile:false});
